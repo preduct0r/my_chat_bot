@@ -5,8 +5,9 @@ import time
 from typing import Any, Dict, List, Optional
 
 from .attachments import IncomingAttachment, classify_attachment
-from .context_store import ChatMessage, RecentMessageStore
+from .context_store import ChatMessage
 from .http_utils import ExternalServiceError
+from .memory import MemoryService
 from .openai_client import OpenAIResponsesClient
 from .telegram_client import TelegramClient
 
@@ -21,25 +22,28 @@ class TelegramBotApp:
         self,
         telegram_client: TelegramClient,
         openai_client: OpenAIResponsesClient,
-        context_store: RecentMessageStore,
+        memory_service: MemoryService,
         poll_timeout: int,
         logger: Optional[logging.Logger] = None,
     ) -> None:
         self.telegram_client = telegram_client
         self.openai_client = openai_client
-        self.context_store = context_store
+        self.memory_service = memory_service
         self.poll_timeout = poll_timeout
         self.logger = logger or logging.getLogger(__name__)
 
     def run_forever(self) -> None:
         offset: Optional[int] = None
+        last_maintenance_ts = 0.0
         self.logger.info(
-            "Starting Telegram polling context_size=%s poll_timeout=%s",
-            self.context_store.max_messages,
+            "Starting Telegram polling poll_timeout=%s",
             self.poll_timeout,
         )
         while True:
             try:
+                if time.time() - last_maintenance_ts >= 60:
+                    self.memory_service.summarize_expired_sessions()
+                    last_maintenance_ts = time.time()
                 updates = self.telegram_client.get_updates(offset=offset, poll_timeout=self.poll_timeout)
                 for update in updates:
                     update_id = update.get("update_id")
@@ -72,8 +76,11 @@ class TelegramBotApp:
         caption = message.get("caption")
         message_id = message.get("message_id")
         update_id = update.get("update_id", "unknown")
-        user_id = message.get("from", {}).get("id", "unknown")
+        user_id = message.get("from", {}).get("id")
         correlation_id = f"tg-{update_id}"
+        if not isinstance(user_id, int):
+            self.logger.warning("Skipping message without valid user_id update=%s", update)
+            return
 
         self.logger.info(
             "Received Telegram update correlation_id=%s chat_id=%s user_id=%s",
@@ -134,32 +141,35 @@ class TelegramBotApp:
             return
 
         if clean_text == "/reset" and not attachments:
-            self.context_store.clear(chat_id)
+            self.memory_service.reset_active_session(user_id)
             self.telegram_client.send_message(
                 chat_id=chat_id,
-                text="Контекст чата очищен.",
+                text="Активная сессия очищена. Долговременная память пользователя сохранена.",
                 reply_to_message_id=message_id if isinstance(message_id, int) else None,
             )
-            self.logger.info("Context cleared correlation_id=%s chat_id=%s", correlation_id, chat_id)
+            self.logger.info("Active session cleared correlation_id=%s chat_id=%s", correlation_id, chat_id)
             return
-
-        history = self.context_store.get(chat_id)
-        self.logger.debug(
-            "Preparing OpenAI request correlation_id=%s chat_id=%s history_messages=%s attachment_count=%s",
-            correlation_id,
-            chat_id,
-            len(history),
-            len(attachments),
-        )
 
         prompt_text = clean_text or DEFAULT_ATTACHMENT_PROMPT
         user_message = self._build_user_message(prompt_text, attachments)
-        request_messages = history + [user_message]
+        user_summary_text = self._build_user_summary_text(prompt_text, attachments)
         try:
+            prepared = self.memory_service.prepare_conversation(
+                telegram_user_id=user_id,
+                message=user_message,
+                summary_text=user_summary_text,
+                correlation_id=correlation_id,
+            )
+            self.logger.debug(
+                "Prepared final prompt correlation_id=%s prompt_preview=%s",
+                correlation_id,
+                prepared.prompt_preview,
+            )
             assistant_reply = self.openai_client.generate_reply(
-                messages=request_messages,
+                messages=prepared.input_messages,
                 correlation_id=correlation_id,
                 user_reference=str(user_id),
+                instructions=prepared.instructions,
             )
         except ExternalServiceError:
             self.logger.exception(
@@ -174,18 +184,20 @@ class TelegramBotApp:
             )
             return
 
-        self.context_store.append(chat_id, user_message)
-        self.context_store.append(chat_id, ChatMessage.from_text(role="assistant", text=assistant_reply))
+        self.memory_service.store_assistant_reply(
+            session_id=prepared.session_id,
+            reply_text=assistant_reply,
+        )
         self.telegram_client.send_message(
             chat_id=chat_id,
             text=assistant_reply,
             reply_to_message_id=message_id if isinstance(message_id, int) else None,
         )
         self.logger.info(
-            "Reply sent correlation_id=%s chat_id=%s stored_messages=%s",
+            "Reply sent correlation_id=%s chat_id=%s session_id=%s",
             correlation_id,
             chat_id,
-            len(self.context_store.get(chat_id)),
+            prepared.session_id,
         )
 
     def _build_user_message(
@@ -197,6 +209,12 @@ class TelegramBotApp:
         for attachment in attachments:
             content_parts.extend(attachment.to_content_parts())
         return ChatMessage(role="user", content=tuple(content_parts))
+
+    def _build_user_summary_text(self, prompt_text: str, attachments: List[IncomingAttachment]) -> str:
+        attachment_descriptions = [attachment.summary_description() for attachment in attachments]
+        lines = [f"Пользователь: {prompt_text}"]
+        lines.extend(attachment_descriptions)
+        return "\n".join(lines)
 
     def _extract_attachments(
         self,

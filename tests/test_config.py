@@ -39,6 +39,10 @@ class ConfigTests(unittest.TestCase):
             config = AppConfig.from_env_file(
                 env_path=str(env_path),
                 context_size=6,
+                summary_count=4,
+                memory_budget=500,
+                session_timeout_seconds=3600,
+                memory_db_path="data/test.sqlite3",
                 poll_timeout=25,
                 log_level="debug",
             )
@@ -47,6 +51,10 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.openai_api_key, "openai-key")
         self.assertEqual(config.openai_model, "gpt-4.1-mini")
         self.assertEqual(config.context_size, 6)
+        self.assertEqual(config.summary_count, 4)
+        self.assertEqual(config.memory_budget, 500)
+        self.assertEqual(config.session_timeout_seconds, 3600)
+        self.assertEqual(config.memory_db_path, "data/test.sqlite3")
         self.assertEqual(config.poll_timeout, 25)
         self.assertEqual(config.log_level, "DEBUG")
 
@@ -59,6 +67,10 @@ class ConfigTests(unittest.TestCase):
                 AppConfig.from_env_file(
                     env_path=str(env_path),
                     context_size=5,
+                    summary_count=4,
+                    memory_budget=500,
+                    session_timeout_seconds=3600,
+                    memory_db_path="data/test.sqlite3",
                     poll_timeout=30,
                     log_level="INFO",
                 )
@@ -81,6 +93,36 @@ class ConfigTests(unittest.TestCase):
                 AppConfig.from_env_file(
                     env_path=str(env_path),
                     context_size=0,
+                    summary_count=4,
+                    memory_budget=500,
+                    session_timeout_seconds=3600,
+                    memory_db_path="data/test.sqlite3",
+                    poll_timeout=30,
+                    log_level="INFO",
+                )
+
+    def test_invalid_memory_budget_raises(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env_path = Path(temp_dir) / ".env"
+            env_path.write_text(
+                "\n".join(
+                    [
+                        "TELEGRAM_BOT_TOKEN=tg-token",
+                        "OPENAI_API_KEY=openai-key",
+                        "OPENAI_MODEL=gpt-4.1-mini",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(ConfigError):
+                AppConfig.from_env_file(
+                    env_path=str(env_path),
+                    context_size=5,
+                    summary_count=4,
+                    memory_budget=0,
+                    session_timeout_seconds=3600,
+                    memory_db_path="data/test.sqlite3",
                     poll_timeout=30,
                     log_level="INFO",
                 )
@@ -88,4 +130,3 @@ class ConfigTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

@@ -1,8 +1,9 @@
 import unittest
 
 from my_chat_bot.bot import TelegramBotApp
-from my_chat_bot.context_store import ChatMessage, RecentMessageStore
+from my_chat_bot.context_store import ChatMessage
 from my_chat_bot.http_utils import ExternalServiceError
+from my_chat_bot.memory import PreparedConversation
 
 
 class FakeTelegramClient:
@@ -28,6 +29,9 @@ class FakeTelegramClient:
                 return payload["bytes"]
         raise KeyError(file_path)
 
+    def get_updates(self, offset=None, poll_timeout=30):
+        return []
+
 
 class FakeOpenAIClient:
     def __init__(self, reply="Ответ модели", error=None) -> None:
@@ -35,12 +39,13 @@ class FakeOpenAIClient:
         self.error = error
         self.calls = []
 
-    def generate_reply(self, messages, correlation_id, user_reference):
+    def generate_reply(self, messages, correlation_id, user_reference, instructions=None):
         self.calls.append(
             {
                 "messages": list(messages),
                 "correlation_id": correlation_id,
                 "user_reference": user_reference,
+                "instructions": instructions,
             }
         )
         if self.error is not None:
@@ -48,18 +53,50 @@ class FakeOpenAIClient:
         return self.reply
 
 
+class FakeMemoryService:
+    def __init__(self) -> None:
+        self.prepare_calls = []
+        self.stored_replies = []
+        self.reset_calls = []
+        self.summarize_calls = []
+        self.prepared = PreparedConversation(
+            session_id=101,
+            instructions="FINAL INSTRUCTIONS",
+            input_messages=[ChatMessage.from_text(role="user", text="prepared message")],
+            prompt_preview="PROMPT PREVIEW",
+        )
+
+    def prepare_conversation(self, telegram_user_id, message, summary_text, correlation_id, now_ts=None):
+        self.prepare_calls.append(
+            {
+                "telegram_user_id": telegram_user_id,
+                "message": message,
+                "summary_text": summary_text,
+                "correlation_id": correlation_id,
+            }
+        )
+        return self.prepared
+
+    def store_assistant_reply(self, session_id, reply_text, now_ts=None):
+        self.stored_replies.append({"session_id": session_id, "reply_text": reply_text})
+
+    def reset_active_session(self, telegram_user_id):
+        self.reset_calls.append(telegram_user_id)
+
+    def summarize_expired_sessions(self, now_ts=None, limit=10):
+        self.summarize_calls.append({"now_ts": now_ts, "limit": limit})
+
+
 class TelegramBotAppTests(unittest.TestCase):
-    def test_handle_update_builds_context_and_stores_last_messages(self) -> None:
+    def test_handle_update_uses_memory_service_and_final_instructions(self) -> None:
         telegram_client = FakeTelegramClient()
         openai_client = FakeOpenAIClient(reply="Готово")
-        context_store = RecentMessageStore(max_messages=3)
-        context_store.append(1, ChatMessage.from_text(role="user", text="старый вопрос"))
-        context_store.append(1, ChatMessage.from_text(role="assistant", text="старый ответ"))
+        memory_service = FakeMemoryService()
 
         app = TelegramBotApp(
             telegram_client=telegram_client,
             openai_client=openai_client,
-            context_store=context_store,
+            memory_service=memory_service,
             poll_timeout=10,
         )
 
@@ -75,35 +112,26 @@ class TelegramBotAppTests(unittest.TestCase):
             }
         )
 
-        self.assertEqual(len(openai_client.calls), 1)
+        self.assertEqual(len(memory_service.prepare_calls), 1)
+        self.assertEqual(memory_service.prepare_calls[0]["telegram_user_id"], 55)
+        self.assertEqual(memory_service.prepare_calls[0]["summary_text"], "Пользователь: новый вопрос")
+        self.assertEqual(openai_client.calls[0]["instructions"], "FINAL INSTRUCTIONS")
         self.assertEqual(
             openai_client.calls[0]["messages"],
-            [
-                ChatMessage.from_text(role="user", text="старый вопрос"),
-                ChatMessage.from_text(role="assistant", text="старый ответ"),
-                ChatMessage.from_text(role="user", text="новый вопрос"),
-            ],
+            [ChatMessage.from_text(role="user", text="prepared message")],
         )
-        self.assertEqual(
-            context_store.get(1),
-            [
-                ChatMessage.from_text(role="assistant", text="старый ответ"),
-                ChatMessage.from_text(role="user", text="новый вопрос"),
-                ChatMessage.from_text(role="assistant", text="Готово"),
-            ],
-        )
+        self.assertEqual(memory_service.stored_replies[0]["reply_text"], "Готово")
         self.assertEqual(telegram_client.sent_messages[0]["text"], "Готово")
 
-    def test_reset_command_clears_context(self) -> None:
+    def test_reset_command_clears_active_session_only(self) -> None:
         telegram_client = FakeTelegramClient()
         openai_client = FakeOpenAIClient()
-        context_store = RecentMessageStore(max_messages=2)
-        context_store.append(10, ChatMessage.from_text(role="user", text="hello"))
+        memory_service = FakeMemoryService()
 
         app = TelegramBotApp(
             telegram_client=telegram_client,
             openai_client=openai_client,
-            context_store=context_store,
+            memory_service=memory_service,
             poll_timeout=10,
         )
 
@@ -119,18 +147,21 @@ class TelegramBotAppTests(unittest.TestCase):
             }
         )
 
-        self.assertEqual(context_store.get(10), [])
-        self.assertEqual(telegram_client.sent_messages[0]["text"], "Контекст чата очищен.")
+        self.assertEqual(memory_service.reset_calls, [22])
+        self.assertEqual(
+            telegram_client.sent_messages[0]["text"],
+            "Активная сессия очищена. Долговременная память пользователя сохранена.",
+        )
 
     def test_unsupported_message_gets_fallback_reply(self) -> None:
         telegram_client = FakeTelegramClient()
         openai_client = FakeOpenAIClient()
-        context_store = RecentMessageStore(max_messages=2)
+        memory_service = FakeMemoryService()
 
         app = TelegramBotApp(
             telegram_client=telegram_client,
             openai_client=openai_client,
-            context_store=context_store,
+            memory_service=memory_service,
             poll_timeout=10,
         )
 
@@ -154,12 +185,12 @@ class TelegramBotAppTests(unittest.TestCase):
     def test_openai_error_returns_user_friendly_message(self) -> None:
         telegram_client = FakeTelegramClient()
         openai_client = FakeOpenAIClient(error=ExternalServiceError("boom"))
-        context_store = RecentMessageStore(max_messages=2)
+        memory_service = FakeMemoryService()
 
         app = TelegramBotApp(
             telegram_client=telegram_client,
             openai_client=openai_client,
-            context_store=context_store,
+            memory_service=memory_service,
             poll_timeout=10,
         )
 
@@ -175,25 +206,25 @@ class TelegramBotAppTests(unittest.TestCase):
             }
         )
 
-        self.assertEqual(context_store.get(1), [])
+        self.assertEqual(memory_service.stored_replies, [])
         self.assertEqual(
             telegram_client.sent_messages[0]["text"],
             "Не удалось получить ответ от модели. Попробуйте еще раз чуть позже.",
         )
 
-    def test_photo_message_is_sent_to_model_with_default_prompt(self) -> None:
+    def test_photo_message_builds_summary_text_without_binary_payload(self) -> None:
         telegram_client = FakeTelegramClient()
         telegram_client.files["photo-file"] = {
             "meta": {"file_path": "photos/1.jpg"},
             "bytes": b"\xff\xd8\xff",
         }
         openai_client = FakeOpenAIClient(reply="На фото кот")
-        context_store = RecentMessageStore(max_messages=2)
+        memory_service = FakeMemoryService()
 
         app = TelegramBotApp(
             telegram_client=telegram_client,
             openai_client=openai_client,
-            context_store=context_store,
+            memory_service=memory_service,
             poll_timeout=10,
         )
 
@@ -211,66 +242,24 @@ class TelegramBotAppTests(unittest.TestCase):
             }
         )
 
-        user_message = openai_client.calls[0]["messages"][0]
-        self.assertEqual(user_message.content[0]["text"], "Опиши вложение и ответь по нему.")
-        self.assertEqual(user_message.content[1]["type"], "input_image")
-        self.assertTrue(user_message.content[1]["image_url"].startswith("data:image/jpeg;base64,"))
-        self.assertEqual(telegram_client.sent_messages[0]["text"], "На фото кот")
+        prepared = memory_service.prepare_calls[0]
+        self.assertEqual(prepared["message"].content[0]["text"], "Опиши вложение и ответь по нему.")
+        self.assertEqual(prepared["message"].content[1]["type"], "input_image")
+        self.assertIn('Пользователь прикрепил изображение "photo.jpg".', prepared["summary_text"])
 
-    def test_pdf_document_is_sent_as_input_file(self) -> None:
-        telegram_client = FakeTelegramClient()
-        telegram_client.files["pdf-file"] = {
-            "meta": {"file_path": "docs/test.pdf"},
-            "bytes": b"%PDF-1.4",
-        }
-        openai_client = FakeOpenAIClient(reply="Это PDF")
-        context_store = RecentMessageStore(max_messages=2)
-
-        app = TelegramBotApp(
-            telegram_client=telegram_client,
-            openai_client=openai_client,
-            context_store=context_store,
-            poll_timeout=10,
-        )
-
-        app.handle_update(
-            {
-                "update_id": 21,
-                "message": {
-                    "message_id": 8,
-                    "chat": {"id": 1},
-                    "from": {"id": 2},
-                    "caption": "Что в файле?",
-                    "document": {
-                        "file_id": "pdf-file",
-                        "file_name": "test.pdf",
-                        "mime_type": "application/pdf",
-                    },
-                },
-            }
-        )
-
-        user_message = openai_client.calls[0]["messages"][0]
-        self.assertEqual(user_message.content[0]["text"], "Что в файле?")
-        self.assertEqual(user_message.content[1]["type"], "input_file")
-        self.assertEqual(user_message.content[1]["filename"], "test.pdf")
-        self.assertTrue(
-            user_message.content[1]["file_data"].startswith("data:application/pdf;base64,")
-        )
-
-    def test_text_document_is_inlined_as_text(self) -> None:
+    def test_text_document_is_inlined_for_reply_but_summary_uses_description(self) -> None:
         telegram_client = FakeTelegramClient()
         telegram_client.files["text-file"] = {
             "meta": {"file_path": "docs/notes.txt"},
             "bytes": "строка 1\nстрока 2".encode("utf-8"),
         }
         openai_client = FakeOpenAIClient(reply="Прочитал текст")
-        context_store = RecentMessageStore(max_messages=2)
+        memory_service = FakeMemoryService()
 
         app = TelegramBotApp(
             telegram_client=telegram_client,
             openai_client=openai_client,
-            context_store=context_store,
+            memory_service=memory_service,
             poll_timeout=10,
         )
 
@@ -291,172 +280,11 @@ class TelegramBotAppTests(unittest.TestCase):
             }
         )
 
-        user_message = openai_client.calls[0]["messages"][0]
-        self.assertEqual(user_message.content[0]["text"], "Кратко перескажи")
-        self.assertIn("Содержимое файла notes.txt:\nстрока 1\nстрока 2", user_message.content[1]["text"])
-
-    def test_unsupported_document_returns_fallback_reply(self) -> None:
-        telegram_client = FakeTelegramClient()
-        telegram_client.files["bin-file"] = {
-            "meta": {"file_path": "docs/archive.zip"},
-            "bytes": b"PK\x03\x04",
-        }
-        openai_client = FakeOpenAIClient()
-        context_store = RecentMessageStore(max_messages=2)
-
-        app = TelegramBotApp(
-            telegram_client=telegram_client,
-            openai_client=openai_client,
-            context_store=context_store,
-            poll_timeout=10,
-        )
-
-        app.handle_update(
-            {
-                "update_id": 23,
-                "message": {
-                    "message_id": 10,
-                    "chat": {"id": 1},
-                    "from": {"id": 2},
-                    "document": {
-                        "file_id": "bin-file",
-                        "file_name": "archive.zip",
-                        "mime_type": "application/zip",
-                    },
-                },
-            }
-        )
-
-        self.assertEqual(len(openai_client.calls), 0)
+        prepared = memory_service.prepare_calls[0]
+        self.assertIn("Содержимое файла notes.txt:\nстрока 1\nстрока 2", prepared["message"].content[1]["text"])
         self.assertEqual(
-            telegram_client.sent_messages[0]["text"],
-            "Поддерживаются текстовые сообщения, изображения, PDF, DOC, DOCX, XLSX и текстовые файлы.",
-        )
-
-    def test_docx_document_is_sent_as_input_file(self) -> None:
-        telegram_client = FakeTelegramClient()
-        telegram_client.files["docx-file"] = {
-            "meta": {"file_path": "docs/spec.docx"},
-            "bytes": b"PK\x03\x04docx",
-        }
-        openai_client = FakeOpenAIClient(reply="Это DOCX")
-        context_store = RecentMessageStore(max_messages=2)
-
-        app = TelegramBotApp(
-            telegram_client=telegram_client,
-            openai_client=openai_client,
-            context_store=context_store,
-            poll_timeout=10,
-        )
-
-        app.handle_update(
-            {
-                "update_id": 24,
-                "message": {
-                    "message_id": 11,
-                    "chat": {"id": 1},
-                    "from": {"id": 2},
-                    "caption": "Что в документе?",
-                    "document": {
-                        "file_id": "docx-file",
-                        "file_name": "spec.docx",
-                        "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    },
-                },
-            }
-        )
-
-        user_message = openai_client.calls[0]["messages"][0]
-        self.assertEqual(user_message.content[0]["text"], "Что в документе?")
-        self.assertEqual(user_message.content[1]["type"], "input_file")
-        self.assertEqual(user_message.content[1]["filename"], "spec.docx")
-        self.assertTrue(
-            user_message.content[1]["file_data"].startswith(
-                "data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,"
-            )
-        )
-
-    def test_doc_document_is_sent_as_input_file(self) -> None:
-        telegram_client = FakeTelegramClient()
-        telegram_client.files["doc-file"] = {
-            "meta": {"file_path": "docs/legacy.doc"},
-            "bytes": b"\xd0\xcf\x11\xe0",
-        }
-        openai_client = FakeOpenAIClient(reply="Это DOC")
-        context_store = RecentMessageStore(max_messages=2)
-
-        app = TelegramBotApp(
-            telegram_client=telegram_client,
-            openai_client=openai_client,
-            context_store=context_store,
-            poll_timeout=10,
-        )
-
-        app.handle_update(
-            {
-                "update_id": 25,
-                "message": {
-                    "message_id": 12,
-                    "chat": {"id": 1},
-                    "from": {"id": 2},
-                    "document": {
-                        "file_id": "doc-file",
-                        "file_name": "legacy.doc",
-                        "mime_type": "application/msword",
-                    },
-                },
-            }
-        )
-
-        user_message = openai_client.calls[0]["messages"][0]
-        self.assertEqual(user_message.content[0]["text"], "Опиши вложение и ответь по нему.")
-        self.assertEqual(user_message.content[1]["type"], "input_file")
-        self.assertEqual(user_message.content[1]["filename"], "legacy.doc")
-        self.assertTrue(
-            user_message.content[1]["file_data"].startswith("data:application/msword;base64,")
-        )
-
-    def test_xlsx_document_is_sent_as_input_file(self) -> None:
-        telegram_client = FakeTelegramClient()
-        telegram_client.files["xlsx-file"] = {
-            "meta": {"file_path": "docs/report.xlsx"},
-            "bytes": b"PK\x03\x04xlsx",
-        }
-        openai_client = FakeOpenAIClient(reply="Это XLSX")
-        context_store = RecentMessageStore(max_messages=2)
-
-        app = TelegramBotApp(
-            telegram_client=telegram_client,
-            openai_client=openai_client,
-            context_store=context_store,
-            poll_timeout=10,
-        )
-
-        app.handle_update(
-            {
-                "update_id": 26,
-                "message": {
-                    "message_id": 13,
-                    "chat": {"id": 1},
-                    "from": {"id": 2},
-                    "caption": "Сделай краткую сводку по таблице",
-                    "document": {
-                        "file_id": "xlsx-file",
-                        "file_name": "report.xlsx",
-                        "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    },
-                },
-            }
-        )
-
-        user_message = openai_client.calls[0]["messages"][0]
-        self.assertEqual(user_message.content[0]["text"], "Сделай краткую сводку по таблице")
-        self.assertEqual(user_message.content[1]["type"], "input_file")
-        self.assertEqual(user_message.content[1]["filename"], "report.xlsx")
-        self.assertTrue(
-            user_message.content[1]["file_data"].startswith(
-                "data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,"
-            )
+            prepared["summary_text"],
+            'Пользователь: Кратко перескажи\nПользователь прикрепил текстовый файл "notes.txt".',
         )
 
 

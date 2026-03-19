@@ -52,6 +52,16 @@ class IncomingAttachment:
     mime_type: str
     data: bytes
 
+    def summary_description(self) -> str:
+        kind_label = {
+            "image": "изображение",
+            "pdf": "PDF",
+            "rich_document": "документ",
+            "spreadsheet": "таблицу",
+            "text": "текстовый файл",
+        }.get(self.kind, "файл")
+        return f'Пользователь прикрепил {kind_label} "{self.filename}".'
+
     def to_content_parts(self) -> List[Dict[str, str]]:
         if self.kind == "image":
             encoded = base64.b64encode(self.data).decode("ascii")

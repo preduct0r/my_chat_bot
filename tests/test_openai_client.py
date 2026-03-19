@@ -48,12 +48,13 @@ class OpenAIResponsesClientTests(unittest.TestCase):
             ],
             correlation_id="tg-10",
             user_reference="42",
+            instructions="final instructions",
         )
 
         self.assertEqual(reply, "Привет!")
         self.assertEqual(captured["url"], "https://api.openai.com/v1/responses")
         self.assertEqual(captured["payload"]["model"], "gpt-4.1-mini")
-        self.assertEqual(captured["payload"]["instructions"], "system prompt")
+        self.assertEqual(captured["payload"]["instructions"], "final instructions")
         self.assertEqual(
             captured["payload"]["input"],
             [
@@ -76,6 +77,51 @@ class OpenAIResponsesClientTests(unittest.TestCase):
     def test_extract_output_text_raises_on_missing_text(self) -> None:
         with self.assertRaises(ExternalServiceError):
             extract_output_text({"output": [{"type": "message", "content": []}]})
+
+    def test_summarize_dialogue_uses_structured_output_schema(self) -> None:
+        captured = {}
+
+        def fake_transport(url, payload, headers, timeout):
+            captured["payload"] = payload
+            return HttpResponse(
+                status_code=200,
+                body={
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": (
+                                        '{"personal":[{"fact":"Предпочитает русский","category":"language"}],'
+                                        '"dialog_summary":{"summary":"Итог","key_points":["A"],"documents":["doc.pdf"],"open_questions":[]}}'
+                                    ),
+                                }
+                            ],
+                        }
+                    ]
+                },
+                headers={},
+            )
+
+        client = OpenAIResponsesClient(
+            api_key="secret",
+            model="gpt-4.1-mini",
+            api_url="https://api.openai.com/v1/responses",
+            system_prompt="system prompt",
+            transport=fake_transport,
+        )
+
+        payload = client.summarize_dialogue(
+            transcript="Пользователь: привет\nАссистент: здравствуйте",
+            existing_personal_memory=[{"category": "name", "fact": "Денис"}],
+            correlation_id="sum-1",
+            user_reference="42",
+        )
+
+        self.assertEqual(payload["personal"][0]["fact"], "Предпочитает русский")
+        self.assertEqual(captured["payload"]["text"]["format"]["type"], "json_schema")
+        self.assertEqual(captured["payload"]["text"]["format"]["name"], "dialogue_memory_summary")
 
 
 if __name__ == "__main__":

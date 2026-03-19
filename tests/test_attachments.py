@@ -76,6 +76,19 @@ class AttachmentTests(unittest.TestCase):
             )
         )
 
+    def test_attachment_summary_description_is_human_readable(self) -> None:
+        attachment = IncomingAttachment(
+            kind="pdf",
+            filename="spec.pdf",
+            mime_type="application/pdf",
+            data=b"%PDF-1.4",
+        )
+
+        self.assertEqual(
+            attachment.summary_description(),
+            'Пользователь прикрепил PDF "spec.pdf".',
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
