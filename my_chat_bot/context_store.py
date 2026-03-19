@@ -2,16 +2,26 @@ from __future__ import annotations
 
 from collections import defaultdict, deque
 from dataclasses import dataclass
-from typing import Deque, Dict, List, Mapping, MutableMapping
+from typing import Deque, Dict, List, Mapping, MutableMapping, Tuple
 
 
 @dataclass(frozen=True)
 class ChatMessage:
     role: str
-    content: str
+    content: Tuple[Mapping[str, str], ...]
 
-    def to_openai_input(self) -> Mapping[str, str]:
-        return {"role": self.role, "content": self.content}
+    @classmethod
+    def from_text(cls, role: str, text: str) -> "ChatMessage":
+        return cls(role=role, content=({"type": _content_type_for_role(role), "text": text},))
+
+    def to_openai_input(self) -> Mapping[str, object]:
+        return {"role": self.role, "content": [dict(part) for part in self.content]}
+
+
+def _content_type_for_role(role: str) -> str:
+    if role == "assistant":
+        return "output_text"
+    return "input_text"
 
 
 class RecentMessageStore:
@@ -36,4 +46,3 @@ class RecentMessageStore:
 
     def snapshot(self) -> Dict[int, List[ChatMessage]]:
         return {chat_id: list(messages) for chat_id, messages in self._messages.items()}
-

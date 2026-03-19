@@ -87,4 +87,3 @@ def extract_output_text(payload: object) -> str:
     if not text:
         raise ExternalServiceError("OpenAI response did not contain assistant text")
     return text
-

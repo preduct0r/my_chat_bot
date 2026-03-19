@@ -37,8 +37,14 @@ class OpenAIResponsesClientTests(unittest.TestCase):
 
         reply = client.generate_reply(
             messages=[
-                ChatMessage(role="assistant", content="Старый ответ"),
-                ChatMessage(role="user", content="Новый вопрос"),
+                ChatMessage.from_text(role="assistant", text="Старый ответ"),
+                ChatMessage(
+                    role="user",
+                    content=(
+                        {"type": "input_text", "text": "Новый вопрос"},
+                        {"type": "input_image", "image_url": "data:image/png;base64,AAA"},
+                    ),
+                ),
             ],
             correlation_id="tg-10",
             user_reference="42",
@@ -51,8 +57,17 @@ class OpenAIResponsesClientTests(unittest.TestCase):
         self.assertEqual(
             captured["payload"]["input"],
             [
-                {"role": "assistant", "content": "Старый ответ"},
-                {"role": "user", "content": "Новый вопрос"},
+                {
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "Старый ответ"}],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": "Новый вопрос"},
+                        {"type": "input_image", "image_url": "data:image/png;base64,AAA"},
+                    ],
+                },
             ],
         )
         self.assertEqual(captured["headers"]["Authorization"], "Bearer secret")
@@ -65,4 +80,3 @@ class OpenAIResponsesClientTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

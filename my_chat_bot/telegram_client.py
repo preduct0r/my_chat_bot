@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
-from .http_utils import ExternalServiceError, Transport, post_json
+from .http_utils import ExternalServiceError, Transport, get_bytes, post_json
 
 
 class TelegramClient:
@@ -15,6 +15,7 @@ class TelegramClient:
         logger: Optional[logging.Logger] = None,
     ) -> None:
         self.base_url = f"https://api.telegram.org/bot{bot_token}"
+        self.file_base_url = f"https://api.telegram.org/file/bot{bot_token}"
         self.timeout = timeout
         self.transport = transport or post_json
         self.logger = logger or logging.getLogger(__name__)
@@ -61,6 +62,23 @@ class TelegramClient:
         )
         _ensure_telegram_ok(response.body)
 
+    def get_file(self, file_id: str) -> Dict[str, Any]:
+        response = self.transport(
+            f"{self.base_url}/getFile",
+            {"file_id": file_id},
+            headers={},
+            timeout=self.timeout,
+        )
+        body = _ensure_telegram_ok(response.body)
+        result = body.get("result")
+        if not isinstance(result, dict) or not isinstance(result.get("file_path"), str):
+            raise ExternalServiceError("Telegram getFile returned invalid result")
+        return result
+
+    def download_file(self, file_path: str) -> bytes:
+        self.logger.debug("Downloading Telegram file file_path=%s", file_path)
+        return get_bytes(f"{self.file_base_url}/{file_path}", timeout=self.timeout)
+
 
 def _ensure_telegram_ok(payload: object) -> Dict[str, Any]:
     if not isinstance(payload, dict):
@@ -68,4 +86,3 @@ def _ensure_telegram_ok(payload: object) -> Dict[str, Any]:
     if payload.get("ok") is not True:
         raise ExternalServiceError(f"Telegram API returned an error: {payload}")
     return payload
-

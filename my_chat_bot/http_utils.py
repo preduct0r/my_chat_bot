@@ -63,6 +63,29 @@ def post_json(
         raise ExternalServiceError("External service returned invalid JSON") from exc
 
 
+def get_bytes(
+    url: str,
+    headers: Optional[Mapping[str, str]] = None,
+    timeout: float = 30.0,
+) -> bytes:
+    request = urllib.request.Request(
+        url=url,
+        headers=dict(headers or {}),
+        method="GET",
+    )
+
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return response.read()
+    except urllib.error.HTTPError as exc:
+        raw_body = exc.read().decode("utf-8", errors="replace")
+        raise ExternalServiceError(
+            f"HTTP {exc.code} returned by external service while downloading bytes: {raw_body}"
+        ) from exc
+    except urllib.error.URLError as exc:
+        raise ExternalServiceError(f"Failed to reach external service: {exc}") from exc
+
+
 def _safe_parse_json(raw_body: str) -> Any:
     if not raw_body:
         return None
@@ -70,4 +93,3 @@ def _safe_parse_json(raw_body: str) -> Any:
         return json.loads(raw_body)
     except json.JSONDecodeError:
         return raw_body
-
