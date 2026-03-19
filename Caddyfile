@@ -1,0 +1,12 @@
+{
+  email preductor@gmail.com
+}
+
+www.thefem.ru {
+  redir https://thefem.ru{uri} permanent
+}
+
+thefem.ru {
+  encode zstd gzip
+  reverse_proxy 127.0.0.1:8081
+}

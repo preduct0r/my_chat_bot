@@ -12,3 +12,7 @@ dependencies = []
 
 [project.scripts]
 my-chat-bot = "my_chat_bot.__main__:main"
+my-chat-bot-web = "my_chat_bot.web_main:main"
+
+[tool.setuptools.packages.find]
+include = ["my_chat_bot*"]

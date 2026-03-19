@@ -3,12 +3,12 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.den.my-chat-bot</string>
+  <string>com.den.my-chat-bot-web</string>
 
   <key>ProgramArguments</key>
   <array>
     <string>/bin/zsh</string>
-    <string>${PROJECT_ROOT}/scripts/run_bot_launchd.sh</string>
+    <string>${PROJECT_ROOT}/scripts/run_web_launchd.sh</string>
   </array>
 
   <key>WorkingDirectory</key>
@@ -26,30 +26,35 @@
     <string>/Users/den/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     <key>UV_BIN</key>
     <string>/Users/den/.local/bin/uv</string>
-    <key>BOT_CONTEXT_SIZE</key>
+    <key>WEB_CONTEXT_SIZE</key>
     <string>15</string>
-    <key>BOT_SUMMARY_COUNT</key>
+    <key>WEB_SUMMARY_COUNT</key>
     <string>5</string>
-    <key>BOT_MEMORY_BUDGET</key>
+    <key>WEB_MEMORY_BUDGET</key>
     <string>2000</string>
-    <key>BOT_SESSION_TIMEOUT_SECONDS</key>
+    <key>WEB_SESSION_TIMEOUT_SECONDS</key>
     <string>3600</string>
-    <key>BOT_MEMORY_DB_PATH</key>
+    <key>WEB_MEMORY_DB_PATH</key>
     <string>${PROJECT_ROOT}/data/bot_memory.sqlite3</string>
-    <key>BOT_ENV_FILE</key>
+    <key>WEB_ENV_FILE</key>
     <string>${PROJECT_ROOT}/.env</string>
-    <key>BOT_POLL_TIMEOUT</key>
-    <string>30</string>
-    <key>BOT_LOG_LEVEL</key>
+    <key>WEB_HOST</key>
+    <string>127.0.0.1</string>
+    <key>WEB_PORT</key>
+    <string>8081</string>
+    <key>WEB_STATIC_DIR</key>
+    <string>${PROJECT_ROOT}/web</string>
+    <key>WEB_LOG_LEVEL</key>
     <string>INFO</string>
     <key>UV_CACHE_DIR</key>
     <string>${PROJECT_ROOT}/.uv-cache</string>
   </dict>
 
   <key>StandardOutPath</key>
-  <string>${PROJECT_ROOT}/logs/launchd.stdout.log</string>
+  <string>${PROJECT_ROOT}/logs/web.stdout.log</string>
 
   <key>StandardErrorPath</key>
-  <string>${PROJECT_ROOT}/logs/launchd.stderr.log</string>
+  <string>${PROJECT_ROOT}/logs/web.stderr.log</string>
 </dict>
 </plist>
+

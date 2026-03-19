@@ -21,9 +21,9 @@ if [[ -z "$UV_BIN" ]]; then
 fi
 
 exec "$UV_BIN" run my-chat-bot \
-  --context-size "${BOT_CONTEXT_SIZE:-10}" \
-  --summary-count "${BOT_SUMMARY_COUNT:-3}" \
-  --memory-budget "${BOT_MEMORY_BUDGET:-1200}" \
+  --context-size "${BOT_CONTEXT_SIZE:-15}" \
+  --summary-count "${BOT_SUMMARY_COUNT:-5}" \
+  --memory-budget "${BOT_MEMORY_BUDGET:-2000}" \
   --session-timeout-seconds "${BOT_SESSION_TIMEOUT_SECONDS:-3600}" \
   --memory-db-path "${BOT_MEMORY_DB_PATH:-$PROJECT_ROOT/data/bot_memory.sqlite3}" \
   --env-file "${BOT_ENV_FILE:-$PROJECT_ROOT/.env}" \

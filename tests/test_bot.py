@@ -153,6 +153,34 @@ class TelegramBotAppTests(unittest.TestCase):
             "Активная сессия очищена. Долговременная память пользователя сохранена.",
         )
 
+    def test_link_command_generates_code(self) -> None:
+        telegram_client = FakeTelegramClient()
+        openai_client = FakeOpenAIClient()
+        memory_service = FakeMemoryService()
+        memory_service.link_code = "ABCD-1234"
+        memory_service.create_telegram_link_code = lambda telegram_user_id: memory_service.link_code
+
+        app = TelegramBotApp(
+            telegram_client=telegram_client,
+            openai_client=openai_client,
+            memory_service=memory_service,
+            poll_timeout=10,
+        )
+
+        app.handle_update(
+            {
+                "update_id": 9,
+                "message": {
+                    "message_id": 2,
+                    "text": "/link",
+                    "chat": {"id": 10},
+                    "from": {"id": 22},
+                },
+            }
+        )
+
+        self.assertIn("ABCD-1234", telegram_client.sent_messages[0]["text"])
+
     def test_unsupported_message_gets_fallback_reply(self) -> None:
         telegram_client = FakeTelegramClient()
         openai_client = FakeOpenAIClient()

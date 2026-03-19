@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import secrets
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,6 +20,13 @@ class PreparedConversation:
     instructions: str
     input_messages: List[ChatMessage]
     prompt_preview: str
+
+
+@dataclass(frozen=True)
+class WebIdentity:
+    session_token: str
+    memory_user_id: int
+    linked_telegram_user_id: Optional[int]
 
 
 class SQLiteMemoryRepository:
@@ -81,6 +89,22 @@ class SQLiteMemoryRepository:
                     telegram_user_id INTEGER NOT NULL,
                     summary_json TEXT NOT NULL,
                     created_at INTEGER NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS web_clients (
+                    session_token TEXT PRIMARY KEY,
+                    memory_user_id INTEGER NOT NULL,
+                    linked_telegram_user_id INTEGER,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS link_codes (
+                    code TEXT PRIMARY KEY,
+                    telegram_user_id INTEGER NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    expires_at INTEGER NOT NULL,
+                    used_at INTEGER
                 );
                 """
             )
@@ -289,6 +313,93 @@ class SQLiteMemoryRepository:
                 (session_id, telegram_user_id, json.dumps(summary_payload, ensure_ascii=False), now_ts),
             )
 
+    def get_web_client(self, session_token: str) -> Optional[sqlite3.Row]:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "SELECT * FROM web_clients WHERE session_token = ?",
+                (session_token,),
+            )
+            return cursor.fetchone()
+
+    def create_web_client(
+        self,
+        session_token: str,
+        memory_user_id: int,
+        linked_telegram_user_id: Optional[int],
+        now_ts: int,
+    ) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO web_clients (session_token, memory_user_id, linked_telegram_user_id, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (session_token, memory_user_id, linked_telegram_user_id, now_ts, now_ts),
+            )
+
+    def update_web_client_link(
+        self,
+        session_token: str,
+        memory_user_id: int,
+        linked_telegram_user_id: Optional[int],
+        now_ts: int,
+    ) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                UPDATE web_clients
+                SET memory_user_id = ?, linked_telegram_user_id = ?, updated_at = ?
+                WHERE session_token = ?
+                """,
+                (memory_user_id, linked_telegram_user_id, now_ts, session_token),
+            )
+
+    def get_next_anonymous_user_id(self) -> int:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT MIN(telegram_user_id) AS min_id FROM users WHERE telegram_user_id < 0"
+            ).fetchone()
+        min_id = row["min_id"]
+        if min_id is None:
+            return -1
+        return int(min_id) - 1
+
+    def create_link_code(self, code: str, telegram_user_id: int, created_at: int, expires_at: int) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO link_codes (code, telegram_user_id, created_at, expires_at, used_at)
+                VALUES (?, ?, ?, ?, NULL)
+                """,
+                (code, telegram_user_id, created_at, expires_at),
+            )
+
+    def consume_link_code(self, code: str, now_ts: int) -> Optional[int]:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT telegram_user_id, expires_at, used_at
+                FROM link_codes
+                WHERE code = ?
+                """,
+                (code,),
+            ).fetchone()
+            if row is None:
+                return None
+            if row["used_at"] is not None or int(row["expires_at"]) < now_ts:
+                return None
+            connection.execute(
+                "UPDATE link_codes SET used_at = ? WHERE code = ?",
+                (now_ts, code),
+            )
+            return int(row["telegram_user_id"])
+
+    def get_active_session_messages_for_user(self, telegram_user_id: int, limit: int) -> List[ChatMessage]:
+        session = self.get_open_session(telegram_user_id)
+        if session is None:
+            return []
+        return self.get_recent_messages(int(session["id"]), limit)
+
 
 class MemoryService:
     def __init__(
@@ -346,6 +457,115 @@ class MemoryService:
             summaries,
             self.memory_budget,
         )
+        instructions = build_reply_instructions(
+            self.base_system_prompt,
+            selected_personal,
+            selected_summaries,
+        )
+        prompt_preview = build_prompt_preview(
+            self.base_system_prompt,
+            selected_personal,
+            selected_summaries,
+            recent_messages,
+        )
+        self.logger.debug(
+            "Prepared prompt correlation_id=%s telegram_user_id=%s session_id=%s summaries_included=%s memory_tokens=%s",
+            correlation_id,
+            telegram_user_id,
+            session_id,
+            len(selected_summaries),
+            budget_info["total_tokens"],
+        )
+        return PreparedConversation(
+            session_id=session_id,
+            instructions=instructions,
+            input_messages=recent_messages,
+            prompt_preview=prompt_preview,
+        )
+
+    def get_or_create_web_identity(
+        self,
+        session_token: Optional[str],
+        now_ts: Optional[int] = None,
+    ) -> WebIdentity:
+        current_ts = _normalize_ts(now_ts)
+        if session_token:
+            row = self.repository.get_web_client(session_token)
+            if row is not None:
+                return WebIdentity(
+                    session_token=str(row["session_token"]),
+                    memory_user_id=int(row["memory_user_id"]),
+                    linked_telegram_user_id=_nullable_int(row["linked_telegram_user_id"]),
+                )
+
+        token = secrets.token_urlsafe(24)
+        memory_user_id = self.repository.get_next_anonymous_user_id()
+        self.repository.ensure_user(memory_user_id, current_ts)
+        self.repository.create_web_client(
+            session_token=token,
+            memory_user_id=memory_user_id,
+            linked_telegram_user_id=None,
+            now_ts=current_ts,
+        )
+        self.logger.info("Created anonymous web identity session_token=%s memory_user_id=%s", token, memory_user_id)
+        return WebIdentity(session_token=token, memory_user_id=memory_user_id, linked_telegram_user_id=None)
+
+    def link_web_identity(
+        self,
+        session_token: str,
+        code: str,
+        now_ts: Optional[int] = None,
+    ) -> Optional[WebIdentity]:
+        current_ts = _normalize_ts(now_ts)
+        telegram_user_id = self.repository.consume_link_code(code, current_ts)
+        if telegram_user_id is None:
+            return None
+        self.repository.ensure_user(telegram_user_id, current_ts)
+        row = self.repository.get_web_client(session_token)
+        if row is None:
+            self.repository.create_web_client(
+                session_token=session_token,
+                memory_user_id=telegram_user_id,
+                linked_telegram_user_id=telegram_user_id,
+                now_ts=current_ts,
+            )
+        else:
+            self.repository.update_web_client_link(
+                session_token=session_token,
+                memory_user_id=telegram_user_id,
+                linked_telegram_user_id=telegram_user_id,
+                now_ts=current_ts,
+            )
+        self.logger.info(
+            "Linked web identity session_token=%s telegram_user_id=%s",
+            session_token,
+            telegram_user_id,
+        )
+        return WebIdentity(
+            session_token=session_token,
+            memory_user_id=telegram_user_id,
+            linked_telegram_user_id=telegram_user_id,
+        )
+
+    def create_telegram_link_code(
+        self,
+        telegram_user_id: int,
+        ttl_seconds: int = 600,
+        now_ts: Optional[int] = None,
+    ) -> str:
+        current_ts = _normalize_ts(now_ts)
+        code = _generate_link_code()
+        self.repository.create_link_code(
+            code=code,
+            telegram_user_id=telegram_user_id,
+            created_at=current_ts,
+            expires_at=current_ts + ttl_seconds,
+        )
+        self.logger.info("Created Telegram link code telegram_user_id=%s code=%s", telegram_user_id, code)
+        return code
+
+    def get_active_dialogue_messages(self, memory_user_id: int) -> List[ChatMessage]:
+        return self.repository.get_active_session_messages_for_user(memory_user_id, self.context_size)
         instructions = build_reply_instructions(
             self.base_system_prompt,
             selected_personal,
@@ -492,3 +712,16 @@ def _normalize_ts(now_ts: Optional[int]) -> int:
     if now_ts is None:
         return int(time())
     return int(now_ts)
+
+
+def _nullable_int(value: Any) -> Optional[int]:
+    if value is None:
+        return None
+    return int(value)
+
+
+def _generate_link_code() -> str:
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    left = "".join(secrets.choice(alphabet) for _ in range(4))
+    right = "".join(secrets.choice(alphabet) for _ in range(4))
+    return f"{left}-{right}"

@@ -150,6 +150,20 @@ class TelegramBotApp:
             self.logger.info("Active session cleared correlation_id=%s chat_id=%s", correlation_id, chat_id)
             return
 
+        if clean_text == "/link" and not attachments:
+            link_code = self.memory_service.create_telegram_link_code(user_id)
+            self.telegram_client.send_message(
+                chat_id=chat_id,
+                text=(
+                    "Код для привязки web-интерфейса к этому Telegram-пользователю:\n"
+                    f"`{link_code}`\n\n"
+                    "Введите его в web-форме в течение 10 минут."
+                ),
+                reply_to_message_id=message_id if isinstance(message_id, int) else None,
+            )
+            self.logger.info("Telegram link code generated correlation_id=%s chat_id=%s", correlation_id, chat_id)
+            return
+
         prompt_text = clean_text or DEFAULT_ATTACHMENT_PROMPT
         user_message = self._build_user_message(prompt_text, attachments)
         user_summary_text = self._build_user_summary_text(prompt_text, attachments)
