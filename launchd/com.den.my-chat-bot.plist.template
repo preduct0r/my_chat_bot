@@ -23,7 +23,9 @@
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
-    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <string>/Users/den/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>UV_BIN</key>
+    <string>/Users/den/.local/bin/uv</string>
     <key>BOT_CONTEXT_SIZE</key>
     <string>10</string>
     <key>BOT_SUMMARY_COUNT</key>
@@ -51,4 +53,3 @@
   <string>${PROJECT_ROOT}/logs/launchd.stderr.log</string>
 </dict>
 </plist>
-

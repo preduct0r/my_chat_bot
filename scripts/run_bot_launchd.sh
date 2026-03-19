@@ -9,8 +9,18 @@ cd "$PROJECT_ROOT"
 mkdir -p "$PROJECT_ROOT/logs" "$PROJECT_ROOT/data"
 
 export UV_CACHE_DIR="${UV_CACHE_DIR:-$PROJECT_ROOT/.uv-cache}"
+UV_BIN="${UV_BIN:-$(command -v uv || true)}"
 
-exec uv run my-chat-bot \
+if [[ -z "$UV_BIN" && -x "$HOME/.local/bin/uv" ]]; then
+  UV_BIN="$HOME/.local/bin/uv"
+fi
+
+if [[ -z "$UV_BIN" ]]; then
+  echo "uv binary was not found. Set UV_BIN explicitly in launchd environment." >&2
+  exit 127
+fi
+
+exec "$UV_BIN" run my-chat-bot \
   --context-size "${BOT_CONTEXT_SIZE:-10}" \
   --summary-count "${BOT_SUMMARY_COUNT:-3}" \
   --memory-budget "${BOT_MEMORY_BUDGET:-1200}" \
@@ -19,4 +29,3 @@ exec uv run my-chat-bot \
   --env-file "${BOT_ENV_FILE:-$PROJECT_ROOT/.env}" \
   --poll-timeout "${BOT_POLL_TIMEOUT:-30}" \
   --log-level "${BOT_LOG_LEVEL:-INFO}"
-
