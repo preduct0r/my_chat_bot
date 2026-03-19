@@ -67,3 +67,58 @@ uv run python -m unittest discover -s tests -v
 uv run my-chat-bot --help
 uv run python -m unittest discover -s tests -v
 ```
+
+## Автозапуск на macOS через launchd
+
+Для локального запуска на MacBook самый простой вариант — `launchd + uv`.
+
+Что это дает:
+
+- бот стартует автоматически после логина пользователя
+- `launchd` перезапускает процесс, если он завершился с ошибкой
+- после пробуждения Mac процесс продолжает работать в рамках пользовательской сессии
+
+Важно:
+
+- во время sleep бот не работает
+- после пробуждения он либо продолжит выполнение, либо будет перезапущен `launchd`, если процесс завершился
+
+Файлы:
+
+- скрипт запуска: [scripts/run_bot_launchd.sh](/Users/den/projects/pets/my_chat_bot/scripts/run_bot_launchd.sh)
+- installer: [scripts/install_launch_agent.sh](/Users/den/projects/pets/my_chat_bot/scripts/install_launch_agent.sh)
+- uninstaller: [scripts/uninstall_launch_agent.sh](/Users/den/projects/pets/my_chat_bot/scripts/uninstall_launch_agent.sh)
+- шаблон LaunchAgent: [launchd/com.den.my-chat-bot.plist.template](/Users/den/projects/pets/my_chat_bot/launchd/com.den.my-chat-bot.plist.template)
+
+Установка:
+
+```bash
+chmod +x scripts/run_bot_launchd.sh scripts/install_launch_agent.sh scripts/uninstall_launch_agent.sh
+./scripts/install_launch_agent.sh
+```
+
+Проверка:
+
+```bash
+launchctl print gui/$(id -u)/com.den.my-chat-bot
+tail -f logs/launchd.stdout.log
+tail -f logs/launchd.stderr.log
+```
+
+Перезапуск агента:
+
+```bash
+launchctl kickstart -k gui/$(id -u)/com.den.my-chat-bot
+```
+
+Удаление:
+
+```bash
+./scripts/uninstall_launch_agent.sh
+```
+
+Если захотите поменять параметры запуска бота для `launchd`, отредактируйте блок `EnvironmentVariables` в [launchd/com.den.my-chat-bot.plist.template](/Users/den/projects/pets/my_chat_bot/launchd/com.den.my-chat-bot.plist.template) и снова выполните:
+
+```bash
+./scripts/install_launch_agent.sh
+```
