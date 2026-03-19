@@ -27,9 +27,9 @@
     <key>UV_BIN</key>
     <string>/Users/den/.local/bin/uv</string>
     <key>WEB_CONTEXT_SIZE</key>
-    <string>15</string>
+    <string>20</string>
     <key>WEB_SUMMARY_COUNT</key>
-    <string>5</string>
+    <string>10</string>
     <key>WEB_MEMORY_BUDGET</key>
     <string>2000</string>
     <key>WEB_SESSION_TIMEOUT_SECONDS</key>
@@ -57,4 +57,3 @@
   <string>${PROJECT_ROOT}/logs/web.stderr.log</string>
 </dict>
 </plist>
-

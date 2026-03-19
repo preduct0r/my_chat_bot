@@ -21,8 +21,8 @@ if [[ -z "$UV_BIN" ]]; then
 fi
 
 exec "$UV_BIN" run my-chat-bot-web \
-  --context-size "${WEB_CONTEXT_SIZE:-15}" \
-  --summary-count "${WEB_SUMMARY_COUNT:-5}" \
+  --context-size "${WEB_CONTEXT_SIZE:-20}" \
+  --summary-count "${WEB_SUMMARY_COUNT:-10}" \
   --memory-budget "${WEB_MEMORY_BUDGET:-2000}" \
   --session-timeout-seconds "${WEB_SESSION_TIMEOUT_SECONDS:-3600}" \
   --memory-db-path "${WEB_MEMORY_DB_PATH:-$PROJECT_ROOT/data/bot_memory.sqlite3}" \
@@ -31,4 +31,3 @@ exec "$UV_BIN" run my-chat-bot-web \
   --port "${WEB_PORT:-8081}" \
   --static-dir "${WEB_STATIC_DIR:-$PROJECT_ROOT/web}" \
   --log-level "${WEB_LOG_LEVEL:-INFO}"
-

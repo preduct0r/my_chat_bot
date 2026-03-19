@@ -27,9 +27,9 @@
     <key>UV_BIN</key>
     <string>/Users/den/.local/bin/uv</string>
     <key>BOT_CONTEXT_SIZE</key>
-    <string>15</string>
+    <string>20</string>
     <key>BOT_SUMMARY_COUNT</key>
-    <string>5</string>
+    <string>10</string>
     <key>BOT_MEMORY_BUDGET</key>
     <string>2000</string>
     <key>BOT_SESSION_TIMEOUT_SECONDS</key>
