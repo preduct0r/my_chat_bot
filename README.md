@@ -61,20 +61,37 @@ chmod +x scripts/*.sh
 ./scripts/stop_stack.sh
 ```
 
-Если DNS уже настроен, `Caddy` установлен и хотите сразу попробовать публичный HTTPS, можно использовать:
+### Один запуск с HTTPS
+
+Если DNS уже настроен, `Caddy` установлен и хотите сразу попробовать публичный HTTPS на `https://thefem.ru`, используйте:
 
 ```bash
 ./scripts/start_stack.sh --with-https
 ```
 
-Но этот режим имеет смысл только когда `thefem.ru` уже резолвится в ваш внешний IP и на роутере проброшены `80/443`.
+Что делает эта команда:
+
+- поднимает Telegram-бота через `launchd`
+- поднимает web-сервер через `launchd`
+- запускает `Caddy` для `https://thefem.ru`
+
+Этот режим имеет смысл только когда:
+
+- `thefem.ru` уже резолвится в ваш внешний IP
+- `www.thefem.ru` тоже резолвится в ваш внешний IP
+- на роутере проброшены `80/443` на ваш Mac
+
+Важно:
+
+- сейчас `Caddy` запускается в foreground, поэтому терминал с этой командой закрывать нельзя
+- если нужен запуск HTTPS тоже без привязки к терминалу, следующая доработка — отдельный `launchd`-агент для `Caddy`
 
 ### Web-сервер
 
 ```bash
 uv run my-chat-bot-web \
-  --context-size 15 \
-  --summary-count 5 \
+  --context-size 20 \
+  --summary-count 10 \
   --memory-budget 2000 \
   --memory-db-path data/bot_memory.sqlite3 \
   --host 127.0.0.1 \
