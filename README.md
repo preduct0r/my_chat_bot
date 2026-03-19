@@ -40,6 +40,35 @@ uv sync
 uv run my-chat-bot --context-size 10 --summary-count 3 --memory-budget 1200 --memory-db-path data/bot_memory.sqlite3
 ```
 
+### Один запуск всей связки
+
+Если хотите поднимать Telegram-бота и web-сервер одной командой через `launchd`, используйте:
+
+```bash
+chmod +x scripts/*.sh
+./scripts/start_stack.sh
+```
+
+Это:
+
+- переустановит и перезапустит `LaunchAgent` для Telegram-бота
+- переустановит и перезапустит `LaunchAgent` для web-сервера
+- не требует готового домена
+
+Остановка:
+
+```bash
+./scripts/stop_stack.sh
+```
+
+Если DNS уже настроен, `Caddy` установлен и хотите сразу попробовать публичный HTTPS, можно использовать:
+
+```bash
+./scripts/start_stack.sh --with-https
+```
+
+Но этот режим имеет смысл только когда `thefem.ru` уже резолвится в ваш внешний IP и на роутере проброшены `80/443`.
+
 ### Web-сервер
 
 ```bash
