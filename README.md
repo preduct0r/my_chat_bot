@@ -40,6 +40,60 @@ uv sync
 uv run my-chat-bot --context-size 10 --summary-count 3 --memory-budget 1200 --memory-db-path data/bot_memory.sqlite3
 ```
 
+## Docker Compose + Traefik
+
+Для Linux-поднятия `https://thefem.ru` без ручного запуска `Caddy` в репозитории теперь есть `docker-compose.yml` с:
+
+- `bot` для Telegram polling
+- `web` для HTTP backend на внутреннем порту `8081`
+- `Traefik`, который слушает `80/443`, получает сертификат Let's Encrypt и проксирует трафик на `web`
+
+1. Скопируйте `.env.example` в `.env`.
+2. Заполните обязательные переменные приложения:
+   - `TELEGRAM_BOT_TOKEN`
+   - `OPENAI_API_KEY`
+   - `OPENAI_MODEL`
+3. Укажите параметры HTTPS:
+   - `APP_DOMAIN=thefem.ru`
+   - `TRAEFIK_ACME_EMAIL=you@example.com`
+4. Убедитесь, что:
+   - `thefem.ru` и `www.thefem.ru` уже указывают на внешний IP сервера
+   - входящие `80` и `443` открыты и доходят до Docker-хоста
+5. Поднимите стек:
+
+```bash
+mkdir -p data
+docker compose up -d --build
+```
+
+Проверка:
+
+```bash
+docker compose ps
+docker compose logs -f traefik web bot
+```
+
+Остановка:
+
+```bash
+docker compose down
+```
+
+После успешного выпуска сертификата сайт будет доступен по `https://thefem.ru`.
+
+По умолчанию `web` в compose запускается с параметрами, эквивалентными этому ручному запуску:
+
+```bash
+uv run my-chat-bot-web \
+  --context-size 20 \
+  --summary-count 5 \
+  --memory-budget 2500 \
+  --memory-db-path data/bot_memory.sqlite3 \
+  --port 8081
+```
+
+В контейнере используется `--host 0.0.0.0`, а не `127.0.0.1`, чтобы `Traefik` мог проксировать запросы в `web`.
+
 ### Один запуск всей связки
 
 Если хотите поднимать Telegram-бота и web-сервер одной командой через `launchd`, используйте:
@@ -61,7 +115,7 @@ chmod +x scripts/*.sh
 ./scripts/stop_stack.sh
 ```
 
-### Один запуск с HTTPS
+### Один запуск с HTTPS на macOS
 
 Если DNS уже настроен, `Caddy` установлен и хотите сразу попробовать публичный HTTPS на `https://thefem.ru`, используйте:
 
@@ -184,6 +238,8 @@ tail -f logs/web.stderr.log
 ```
 
 ## HTTPS для `thefem.ru`
+
+Для Linux рекомендуется путь через `docker compose + Traefik`, описанный выше. Историческая конфигурация ниже относится к macOS и `Caddy`.
 
 Чтобы не было предупреждений в браузере, нужен настоящий TLS-сертификат. Для этого в репозитории подготовлен [Caddyfile](/Users/den/projects/pets/my_chat_bot/Caddyfile) под:
 

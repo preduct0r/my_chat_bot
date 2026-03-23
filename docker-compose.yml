@@ -1,0 +1,89 @@
+services:
+  traefik:
+    image: traefik:latest
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --certificatesresolvers.letsencrypt.acme.email=${TRAEFIK_ACME_EMAIL}
+      - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge=true
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik_letsencrypt:/letsencrypt
+    restart: unless-stopped
+
+  bot:
+    build:
+      context: .
+    command:
+      - my-chat-bot
+      - --context-size
+      - "${BOT_CONTEXT_SIZE:-10}"
+      - --summary-count
+      - "${BOT_SUMMARY_COUNT:-3}"
+      - --memory-budget
+      - "${BOT_MEMORY_BUDGET:-1200}"
+      - --session-timeout-seconds
+      - "${BOT_SESSION_TIMEOUT_SECONDS:-3600}"
+      - --memory-db-path
+      - /app/data/bot_memory.sqlite3
+      - --env-file
+      - /app/.env
+      - --poll-timeout
+      - "${BOT_POLL_TIMEOUT:-30}"
+      - --log-level
+      - "${BOT_LOG_LEVEL:-INFO}"
+    volumes:
+      - ./data:/app/data
+      - ./.env:/app/.env:ro
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+    command:
+      - my-chat-bot-web
+      - --context-size
+      - "${WEB_CONTEXT_SIZE:-20}"
+      - --summary-count
+      - "${WEB_SUMMARY_COUNT:-5}"
+      - --memory-budget
+      - "${WEB_MEMORY_BUDGET:-2500}"
+      - --session-timeout-seconds
+      - "${WEB_SESSION_TIMEOUT_SECONDS:-3600}"
+      - --memory-db-path
+      - /app/data/bot_memory.sqlite3
+      - --env-file
+      - /app/.env
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8081"
+      - --static-dir
+      - /app/web
+      - --log-level
+      - "${WEB_LOG_LEVEL:-INFO}"
+    volumes:
+      - ./data:/app/data
+      - ./.env:/app/.env:ro
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.my-chat-bot-web.rule=Host(`${APP_DOMAIN}`) || Host(`www.${APP_DOMAIN}`)
+      - traefik.http.routers.my-chat-bot-web.entrypoints=websecure
+      - traefik.http.routers.my-chat-bot-web.tls=true
+      - traefik.http.routers.my-chat-bot-web.tls.certresolver=letsencrypt
+      - traefik.http.services.my-chat-bot-web.loadbalancer.server.port=8081
+    depends_on:
+      - traefik
+    restart: unless-stopped
+
+volumes:
+  traefik_letsencrypt:
