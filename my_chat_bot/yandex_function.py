@@ -187,14 +187,24 @@ def _non_negative_int(value: str, key: str) -> int:
 
 
 def _extract_path(event: Mapping[str, Any]) -> str:
+    raw_path = _normalize_path(event.get("rawPath"))
+    if raw_path is not None:
+        return raw_path
+
+    declared_path = _normalize_path(event.get("path"))
+    if declared_path is not None and not _is_path_template(declared_path):
+        return declared_path
+
     for candidate in (
-        event.get("rawPath"),
-        event.get("path"),
         event.get("url"),
+        _extract_path_param_value(event),
     ):
         normalized = _normalize_path(candidate)
         if normalized is not None:
             return normalized
+
+    if declared_path is not None:
+        return declared_path
 
     request_context = event.get("requestContext")
     if isinstance(request_context, Mapping):
@@ -236,3 +246,19 @@ def _normalize_path(value: Any) -> Optional[str]:
     if not without_query.startswith("/"):
         without_query = "/" + without_query
     return without_query
+
+
+def _is_path_template(path: str) -> bool:
+    return "{" in path and "}" in path
+
+
+def _extract_path_param_value(event: Mapping[str, Any]) -> Optional[str]:
+    for container_name in ("pathParameters", "pathParams", "params", "parameters"):
+        container = event.get(container_name)
+        if not isinstance(container, Mapping):
+            continue
+        for key in ("path", "proxy", "path+"):
+            value = container.get(key)
+            if isinstance(value, str) and value.strip():
+                return value
+    return None

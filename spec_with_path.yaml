@@ -1,0 +1,23 @@
+openapi: 3.0.0
+info:
+  title: thefem.ru API
+  version: 1.0.0
+paths:
+  /:
+    x-yc-apigateway-any-method:
+      x-yc-apigateway-integration:
+        type: cloud_functions
+        function_id: d4efv99ioilf82n09rg2
+        service_account_id: ajev62evpudjkc0oqlff
+  /{path+}:
+    x-yc-apigateway-any-method:
+      parameters:
+        - name: path
+          in: path
+          required: false
+          schema:
+            type: string
+      x-yc-apigateway-integration:
+        type: cloud_functions
+        function_id: d4efv99ioilf82n09rg2
+        service_account_id: ajev62evpudjkc0oqlff

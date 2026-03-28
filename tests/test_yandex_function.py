@@ -89,19 +89,31 @@ class YandexFunctionTests(unittest.TestCase):
         request = yandex_function._request_from_event(
             {
                 "httpMethod": "GET",
-                "path": "/",
+                "path": "/{path+}",
                 "url": "/app.js?cache=1",
                 "headers": {},
             }
         )
 
-        self.assertEqual(request.path, "/")
+        self.assertEqual(request.path, "/app.js")
 
     def test_normalize_path_supports_full_url(self) -> None:
         self.assertEqual(
             yandex_function._normalize_path("https://example.org/api/state?x=1"),
             "/api/state",
         )
+
+    def test_request_from_event_uses_path_params_for_greedy_route(self) -> None:
+        request = yandex_function._request_from_event(
+            {
+                "httpMethod": "GET",
+                "path": "/{path+}",
+                "pathParams": {"path": "api/state"},
+                "headers": {},
+            }
+        )
+
+        self.assertEqual(request.path, "/api/state")
 
 
 if __name__ == "__main__":
