@@ -399,7 +399,7 @@ class SQLiteMemoryRepository:
         session = self.get_open_session(telegram_user_id)
         if session is None:
             return []
-        return self.get_recent_messages(int(session["id"]), limit)
+        return self.get_recent_messages(session["id"], limit)
 
 
 class MemoryService:
@@ -445,7 +445,7 @@ class MemoryService:
                 session_id,
             )
         else:
-            session_id = int(session["id"])
+            session_id = session["id"]
 
         self.repository.add_message(session_id, message, summary_text, current_ts)
         self.repository.update_session_activity(session_id, current_ts)
@@ -590,7 +590,7 @@ class MemoryService:
         current_ts = _normalize_ts(now_ts)
         cutoff_ts = current_ts - self.session_timeout_seconds
         for session in self.repository.get_expired_open_sessions(cutoff_ts, limit=limit):
-            session_id = int(session["id"])
+            session_id = session["id"]
             telegram_user_id = int(session["telegram_user_id"])
             self.repository.close_session(session_id, current_ts)
             self.logger.info(
@@ -617,7 +617,7 @@ class MemoryService:
         last_activity_at = int(session["last_activity_at"])
         if current_ts - last_activity_at <= self.session_timeout_seconds:
             return
-        session_id = int(session["id"])
+        session_id = session["id"]
         self.repository.close_session(session_id, current_ts)
         self.logger.info(
             "Closing stale session before new user message correlation_id=%s telegram_user_id=%s session_id=%s",
