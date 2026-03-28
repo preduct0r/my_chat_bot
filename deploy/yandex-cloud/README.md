@@ -15,6 +15,7 @@ This repository now supports an HTTPS-only serverless deployment path for Yandex
 - repository source code
 - [`deploy/yandex-cloud/requirements.txt`](/Users/den/projects/pets/my_chat_bot/deploy/yandex-cloud/requirements.txt)
 - the `web/` directory, because the function serves `index.html` and `app.js`
+- API Gateway spec template: [deploy/yandex-cloud/api-gateway.spec.yaml](/Users/den/projects/pets/my_chat_bot/deploy/yandex-cloud/api-gateway.spec.yaml)
 
 ## Required environment variables
 
@@ -39,6 +40,8 @@ This repository now supports an HTTPS-only serverless deployment path for Yandex
 - Browser session identity is sent via `X-Session-Token`, not cookies.
 - Attach a service account to the function so the YDB SDK can use metadata credentials.
 - If the function needs private connectivity to YDB or other resources, place it in an appropriate VPC network according to Yandex Cloud networking guidance.
+- The root route alone is not enough for this app. API Gateway must route both `/` and a greedy path such as `/{path+}`, otherwise `/app.js` and `/api/*` will not reach the function.
+- If `GET /` returns `{"error":"not found"}` from the function, the most likely cause is that the deployed artifact does not include `web/index.html` or `STATIC_DIR` points to the wrong directory.
 
 ## Suggested infrastructure split
 

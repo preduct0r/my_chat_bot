@@ -63,6 +63,12 @@ def handler(event: Mapping[str, Any], context: Any) -> Mapping[str, Any]:
     try:
         app = _get_app()
         request = _request_from_event(event)
+        logging.getLogger(__name__).info(
+            "Yandex function request method=%s path=%s static_dir=%s",
+            request.method,
+            request.path,
+            getattr(app, "static_dir", "<unknown>"),
+        )
         response = app.handle_request(request)
         return {
             "statusCode": response.status_code,
@@ -114,6 +120,11 @@ def _get_app() -> WebChatApp:
         openai_client=openai_client,
         config=WebServerConfig(host="0.0.0.0", port=8080, static_dir=config.static_dir),
     )
+    logging.getLogger(__name__).info(
+        "Initialized Yandex function app static_dir=%s exists=%s",
+        _APP.static_dir,
+        _APP.static_dir.exists(),
+    )
     return _APP
 
 
@@ -133,8 +144,8 @@ def _request_from_event(event: Mapping[str, Any]) -> WebRequest:
     else:
         body_bytes = json.dumps(body, ensure_ascii=False).encode("utf-8")
 
-    path = str(event.get("path") or "/")
-    method = str(event.get("httpMethod") or "GET").upper()
+    path = _extract_path(event)
+    method = _extract_method(event)
     return WebRequest(
         method=method,
         path=path,
@@ -173,3 +184,55 @@ def _non_negative_int(value: str, key: str) -> int:
     if parsed < 0:
         raise ValueError(f"{key} must be zero or a positive integer")
     return parsed
+
+
+def _extract_path(event: Mapping[str, Any]) -> str:
+    for candidate in (
+        event.get("rawPath"),
+        event.get("path"),
+        event.get("url"),
+    ):
+        normalized = _normalize_path(candidate)
+        if normalized is not None:
+            return normalized
+
+    request_context = event.get("requestContext")
+    if isinstance(request_context, Mapping):
+        http_context = request_context.get("http")
+        if isinstance(http_context, Mapping):
+            normalized = _normalize_path(http_context.get("path"))
+            if normalized is not None:
+                return normalized
+
+    return "/"
+
+
+def _extract_method(event: Mapping[str, Any]) -> str:
+    http_method = event.get("httpMethod")
+    if isinstance(http_method, str) and http_method.strip():
+        return http_method.upper()
+
+    request_context = event.get("requestContext")
+    if isinstance(request_context, Mapping):
+        http_context = request_context.get("http")
+        if isinstance(http_context, Mapping):
+            method = http_context.get("method")
+            if isinstance(method, str) and method.strip():
+                return method.upper()
+
+    return "GET"
+
+
+def _normalize_path(value: Any) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    raw = value.strip()
+    if not raw:
+        return None
+    without_query = raw.split("?", 1)[0]
+    if without_query.startswith("http://") or without_query.startswith("https://"):
+        slash_index = without_query.find("/", without_query.find("://") + 3)
+        without_query = without_query[slash_index:] if slash_index >= 0 else "/"
+    if not without_query.startswith("/"):
+        without_query = "/" + without_query
+    return without_query

@@ -229,6 +229,7 @@ class WebChatApp:
     def _static_response(self, filename: str, content_type: str) -> WebResponse:
         path = self.static_dir / filename
         if not path.exists():
+            self.logger.warning("Static file not found path=%s", path)
             return self._json_response(HTTPStatus.NOT_FOUND, {"error": "not found"})
         return WebResponse(
             status_code=int(HTTPStatus.OK),

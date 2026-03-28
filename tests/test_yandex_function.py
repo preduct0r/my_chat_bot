@@ -72,6 +72,37 @@ class YandexFunctionTests(unittest.TestCase):
         self.assertEqual(config.ydb_endpoint, "grpcs://example.net:2135")
         self.assertEqual(config.ydb_database, "/ru-central1/folder/db")
 
+    def test_request_from_event_supports_v2_raw_path(self) -> None:
+        request = yandex_function._request_from_event(
+            {
+                "version": "2.0",
+                "rawPath": "/",
+                "headers": {},
+                "requestContext": {"http": {"method": "GET", "path": "/"}},
+            }
+        )
+
+        self.assertEqual(request.method, "GET")
+        self.assertEqual(request.path, "/")
+
+    def test_request_from_event_uses_actual_url_when_path_is_template(self) -> None:
+        request = yandex_function._request_from_event(
+            {
+                "httpMethod": "GET",
+                "path": "/",
+                "url": "/app.js?cache=1",
+                "headers": {},
+            }
+        )
+
+        self.assertEqual(request.path, "/")
+
+    def test_normalize_path_supports_full_url(self) -> None:
+        self.assertEqual(
+            yandex_function._normalize_path("https://example.org/api/state?x=1"),
+            "/api/state",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
