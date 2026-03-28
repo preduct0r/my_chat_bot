@@ -56,16 +56,16 @@ class YDBMemoryRepository:
         self.pool.execute_with_retries(
             """
             DECLARE $telegram_user_id AS Int64;
-            DECLARE $created_at AS Uint64;
-            DECLARE $updated_at AS Uint64;
+            DECLARE $created_at AS Uint32;
+            DECLARE $updated_at AS Uint32;
 
             UPSERT INTO users (telegram_user_id, created_at, updated_at)
             VALUES ($telegram_user_id, $created_at, $updated_at);
             """,
             {
                 "$telegram_user_id": telegram_user_id,
-                "$created_at": _as_uint(now_ts),
-                "$updated_at": _as_uint(now_ts),
+                "$created_at": _to_uint32_value(self._ydb, now_ts),
+                "$updated_at": _to_uint32_value(self._ydb, now_ts),
             },
         )
 
@@ -114,10 +114,10 @@ class YDBMemoryRepository:
             DECLARE $session_id AS Utf8;
             DECLARE $telegram_user_id AS Int64;
             DECLARE $status AS Utf8;
-            DECLARE $started_at AS Uint64;
-            DECLARE $last_activity_at AS Uint64;
-            DECLARE $closed_at AS Uint64;
-            DECLARE $summarized_at AS Uint64;
+            DECLARE $started_at AS Uint32;
+            DECLARE $last_activity_at AS Uint32;
+            DECLARE $closed_at AS Uint32;
+            DECLARE $summarized_at AS Uint32;
 
             UPSERT INTO sessions (
                 session_id,
@@ -142,10 +142,10 @@ class YDBMemoryRepository:
                 "$session_id": session_id,
                 "$telegram_user_id": telegram_user_id,
                 "$status": "open",
-                "$started_at": _as_uint(now_ts),
-                "$last_activity_at": _as_uint(now_ts),
-                "$closed_at": _as_uint(0),
-                "$summarized_at": _as_uint(0),
+                "$started_at": _to_uint32_value(self._ydb, now_ts),
+                "$last_activity_at": _to_uint32_value(self._ydb, now_ts),
+                "$closed_at": _to_uint32_value(self._ydb, 0),
+                "$summarized_at": _to_uint32_value(self._ydb, 0),
             },
         )
         return session_id
@@ -216,7 +216,7 @@ class YDBMemoryRepository:
             DECLARE $session_id AS Utf8;
             DECLARE $message_id AS Utf8;
             DECLARE $role AS Utf8;
-            DECLARE $created_at AS Uint64;
+            DECLARE $created_at AS Uint32;
             DECLARE $content_json AS Utf8;
             DECLARE $summary_text AS Utf8;
 
@@ -241,7 +241,7 @@ class YDBMemoryRepository:
                 "$session_id": str(session_id),
                 "$message_id": _new_identifier(),
                 "$role": message.role,
-                "$created_at": _as_uint(now_ts),
+                "$created_at": _to_uint32_value(self._ydb, now_ts),
                 "$content_json": json.dumps(message.to_storage_dict(), ensure_ascii=False),
                 "$summary_text": summary_text,
             },
@@ -284,7 +284,7 @@ class YDBMemoryRepository:
         result_sets = self.pool.execute_with_retries(
             f"""
             DECLARE $status AS Utf8;
-            DECLARE $cutoff_ts AS Uint64;
+            DECLARE $cutoff_ts AS Uint32;
 
             SELECT
                 session_id AS id,
@@ -301,7 +301,7 @@ class YDBMemoryRepository:
             """,
             {
                 "$status": "open",
-                "$cutoff_ts": _as_uint(cutoff_ts),
+                "$cutoff_ts": _to_uint32_value(self._ydb, cutoff_ts),
             },
         )
         return [
@@ -345,7 +345,7 @@ class YDBMemoryRepository:
             """
             DECLARE $telegram_user_id AS Int64;
             DECLARE $content_json AS Utf8;
-            DECLARE $updated_at AS Uint64;
+            DECLARE $updated_at AS Uint32;
 
             UPSERT INTO personal_memory (telegram_user_id, content_json, updated_at)
             VALUES ($telegram_user_id, $content_json, $updated_at);
@@ -353,7 +353,7 @@ class YDBMemoryRepository:
             {
                 "$telegram_user_id": telegram_user_id,
                 "$content_json": json.dumps(list(personal_memory), ensure_ascii=False),
-                "$updated_at": _as_uint(now_ts),
+                "$updated_at": _to_uint32_value(self._ydb, now_ts),
             },
         )
 
@@ -390,7 +390,7 @@ class YDBMemoryRepository:
             DECLARE $session_id AS Utf8;
             DECLARE $telegram_user_id AS Int64;
             DECLARE $summary_json AS Utf8;
-            DECLARE $created_at AS Uint64;
+            DECLARE $created_at AS Uint32;
 
             UPSERT INTO session_summaries (session_id, telegram_user_id, summary_json, created_at)
             VALUES ($session_id, $telegram_user_id, $summary_json, $created_at);
@@ -399,7 +399,7 @@ class YDBMemoryRepository:
                 "$session_id": str(session_id),
                 "$telegram_user_id": telegram_user_id,
                 "$summary_json": json.dumps(summary_payload, ensure_ascii=False),
-                "$created_at": _as_uint(now_ts),
+                "$created_at": _to_uint32_value(self._ydb, now_ts),
             },
         )
 
@@ -439,8 +439,8 @@ class YDBMemoryRepository:
             DECLARE $session_token AS Utf8;
             DECLARE $memory_user_id AS Int64;
             DECLARE $linked_telegram_user_id AS Int64;
-            DECLARE $created_at AS Uint64;
-            DECLARE $updated_at AS Uint64;
+            DECLARE $created_at AS Uint32;
+            DECLARE $updated_at AS Uint32;
 
             UPSERT INTO web_clients (
                 session_token,
@@ -461,8 +461,8 @@ class YDBMemoryRepository:
                 "$session_token": session_token,
                 "$memory_user_id": memory_user_id,
                 "$linked_telegram_user_id": linked_telegram_user_id or 0,
-                "$created_at": _as_uint(now_ts),
-                "$updated_at": _as_uint(now_ts),
+                "$created_at": _to_uint32_value(self._ydb, now_ts),
+                "$updated_at": _to_uint32_value(self._ydb, now_ts),
             },
         )
 
@@ -480,8 +480,8 @@ class YDBMemoryRepository:
             DECLARE $session_token AS Utf8;
             DECLARE $memory_user_id AS Int64;
             DECLARE $linked_telegram_user_id AS Int64;
-            DECLARE $created_at AS Uint64;
-            DECLARE $updated_at AS Uint64;
+            DECLARE $created_at AS Uint32;
+            DECLARE $updated_at AS Uint32;
 
             UPSERT INTO web_clients (
                 session_token,
@@ -502,8 +502,8 @@ class YDBMemoryRepository:
                 "$session_token": session_token,
                 "$memory_user_id": memory_user_id,
                 "$linked_telegram_user_id": linked_telegram_user_id or 0,
-                "$created_at": _as_uint(created_at),
-                "$updated_at": _as_uint(now_ts),
+                "$created_at": _to_uint32_value(self._ydb, created_at),
+                "$updated_at": _to_uint32_value(self._ydb, now_ts),
             },
         )
 
@@ -515,9 +515,9 @@ class YDBMemoryRepository:
             """
             DECLARE $code AS Utf8;
             DECLARE $telegram_user_id AS Int64;
-            DECLARE $created_at AS Uint64;
-            DECLARE $expires_at AS Uint64;
-            DECLARE $used_at AS Uint64;
+            DECLARE $created_at AS Uint32;
+            DECLARE $expires_at AS Uint32;
+            DECLARE $used_at AS Uint32;
 
             UPSERT INTO link_codes (code, telegram_user_id, created_at, expires_at, used_at)
             VALUES ($code, $telegram_user_id, $created_at, $expires_at, $used_at);
@@ -525,9 +525,9 @@ class YDBMemoryRepository:
             {
                 "$code": code,
                 "$telegram_user_id": telegram_user_id,
-                "$created_at": _as_uint(created_at),
-                "$expires_at": _as_uint(expires_at),
-                "$used_at": _as_uint(0),
+                "$created_at": _to_uint32_value(self._ydb, created_at),
+                "$expires_at": _to_uint32_value(self._ydb, expires_at),
+                "$used_at": _to_uint32_value(self._ydb, 0),
             },
         )
 
@@ -556,9 +556,9 @@ class YDBMemoryRepository:
             """
             DECLARE $code AS Utf8;
             DECLARE $telegram_user_id AS Int64;
-            DECLARE $created_at AS Uint64;
-            DECLARE $expires_at AS Uint64;
-            DECLARE $used_at AS Uint64;
+            DECLARE $created_at AS Uint32;
+            DECLARE $expires_at AS Uint32;
+            DECLARE $used_at AS Uint32;
 
             UPSERT INTO link_codes (code, telegram_user_id, created_at, expires_at, used_at)
             VALUES ($code, $telegram_user_id, $created_at, $expires_at, $used_at);
@@ -566,9 +566,9 @@ class YDBMemoryRepository:
             {
                 "$code": code,
                 "$telegram_user_id": telegram_user_id,
-                "$created_at": _as_uint(int(_row_value(row, "created_at"))),
-                "$expires_at": _as_uint(expires_at),
-                "$used_at": _as_uint(now_ts),
+                "$created_at": _to_uint32_value(self._ydb, int(_row_value(row, "created_at"))),
+                "$expires_at": _to_uint32_value(self._ydb, expires_at),
+                "$used_at": _to_uint32_value(self._ydb, now_ts),
             },
         )
         return telegram_user_id
@@ -618,10 +618,10 @@ class YDBMemoryRepository:
             DECLARE $session_id AS Utf8;
             DECLARE $telegram_user_id AS Int64;
             DECLARE $status AS Utf8;
-            DECLARE $started_at AS Uint64;
-            DECLARE $last_activity_at AS Uint64;
-            DECLARE $closed_at AS Uint64;
-            DECLARE $summarized_at AS Uint64;
+            DECLARE $started_at AS Uint32;
+            DECLARE $last_activity_at AS Uint32;
+            DECLARE $closed_at AS Uint32;
+            DECLARE $summarized_at AS Uint32;
 
             UPSERT INTO sessions (
                 session_id,
@@ -646,10 +646,10 @@ class YDBMemoryRepository:
                 "$session_id": str(session["id"]),
                 "$telegram_user_id": int(session["telegram_user_id"]),
                 "$status": str(session["status"]),
-                "$started_at": _as_uint(int(session["started_at"])),
-                "$last_activity_at": _as_uint(int(session["last_activity_at"])),
-                "$closed_at": _as_uint(int(session.get("closed_at") or 0)),
-                "$summarized_at": _as_uint(int(session.get("summarized_at") or 0)),
+                "$started_at": _to_uint32_value(self._ydb, int(session["started_at"])),
+                "$last_activity_at": _to_uint32_value(self._ydb, int(session["last_activity_at"])),
+                "$closed_at": _to_uint32_value(self._ydb, int(session.get("closed_at") or 0)),
+                "$summarized_at": _to_uint32_value(self._ydb, int(session.get("summarized_at") or 0)),
             },
         )
 
@@ -677,8 +677,21 @@ def _nullable_int(value: Any) -> Optional[int]:
     return int(value)
 
 
-def _as_uint(value: int) -> int:
-    return max(0, int(value))
+def _to_uint32_value(ydb_module: Any, value: int) -> Any:
+    normalized = max(0, int(value))
+    if ydb_module is None:
+        return normalized
+
+    value_cls = getattr(ydb_module, "Value", None)
+    if value_cls is not None and hasattr(value_cls, "from_uint32"):
+        return value_cls.from_uint32(normalized)
+
+    primitive_type = getattr(getattr(ydb_module, "PrimitiveType", None), "Uint32", None)
+    typed_value = getattr(ydb_module, "TypedValue", None)
+    if primitive_type is not None and typed_value is not None:
+        return typed_value(normalized, primitive_type)
+
+    return normalized
 
 
 def _new_identifier() -> str:
@@ -689,8 +702,8 @@ _SCHEMA_STATEMENTS = [
     """
     CREATE TABLE IF NOT EXISTS users (
         telegram_user_id Int64,
-        created_at Uint64,
-        updated_at Uint64,
+        created_at Uint32,
+        updated_at Uint32,
         PRIMARY KEY (telegram_user_id)
     );
     """,
@@ -699,10 +712,10 @@ _SCHEMA_STATEMENTS = [
         session_id Utf8,
         telegram_user_id Int64,
         status Utf8,
-        started_at Uint64,
-        last_activity_at Uint64,
-        closed_at Uint64,
-        summarized_at Uint64,
+        started_at Uint32,
+        last_activity_at Uint32,
+        closed_at Uint32,
+        summarized_at Uint32,
         PRIMARY KEY (session_id)
     );
     """,
@@ -711,7 +724,7 @@ _SCHEMA_STATEMENTS = [
         session_id Utf8,
         message_id Utf8,
         role Utf8,
-        created_at Uint64,
+        created_at Uint32,
         content_json Utf8,
         summary_text Utf8,
         PRIMARY KEY (session_id, message_id)
@@ -721,7 +734,7 @@ _SCHEMA_STATEMENTS = [
     CREATE TABLE IF NOT EXISTS personal_memory (
         telegram_user_id Int64,
         content_json Utf8,
-        updated_at Uint64,
+        updated_at Uint32,
         PRIMARY KEY (telegram_user_id)
     );
     """,
@@ -730,7 +743,7 @@ _SCHEMA_STATEMENTS = [
         session_id Utf8,
         telegram_user_id Int64,
         summary_json Utf8,
-        created_at Uint64,
+        created_at Uint32,
         PRIMARY KEY (session_id)
     );
     """,
@@ -739,8 +752,8 @@ _SCHEMA_STATEMENTS = [
         session_token Utf8,
         memory_user_id Int64,
         linked_telegram_user_id Int64,
-        created_at Uint64,
-        updated_at Uint64,
+        created_at Uint32,
+        updated_at Uint32,
         PRIMARY KEY (session_token)
     );
     """,
@@ -748,9 +761,9 @@ _SCHEMA_STATEMENTS = [
     CREATE TABLE IF NOT EXISTS link_codes (
         code Utf8,
         telegram_user_id Int64,
-        created_at Uint64,
-        expires_at Uint64,
-        used_at Uint64,
+        created_at Uint32,
+        expires_at Uint32,
+        used_at Uint32,
         PRIMARY KEY (code)
     );
     """,
