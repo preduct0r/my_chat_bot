@@ -72,6 +72,22 @@ class YandexFunctionTests(unittest.TestCase):
         self.assertEqual(config.ydb_endpoint, "grpcs://example.net:2135")
         self.assertEqual(config.ydb_database, "/ru-central1/folder/db")
 
+    def test_function_config_supports_openrouter_aliases(self) -> None:
+        config = yandex_function.YandexFunctionConfig.from_env(
+            {
+                "OPENROUTER_API_KEY": "openrouter-key",
+                "OPENROUTER_MODEL": "openai/gpt-4o-mini",
+                "APP_DOMAIN": "thefem.ru",
+                "YDB_ENDPOINT": "grpcs://example.net:2135",
+                "YDB_DATABASE": "/ru-central1/folder/db",
+            }
+        )
+
+        self.assertEqual(config.openai_api_key, "openrouter-key")
+        self.assertEqual(config.openai_model, "openai/gpt-4o-mini")
+        self.assertEqual(config.openai_api_url, "https://openrouter.ai/api/v1/responses")
+        self.assertEqual(config.app_url, "https://thefem.ru")
+
     def test_request_from_event_supports_v2_raw_path(self) -> None:
         request = yandex_function._request_from_event(
             {

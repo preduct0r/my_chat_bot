@@ -57,6 +57,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.memory_db_path, "data/test.sqlite3")
         self.assertEqual(config.poll_timeout, 25)
         self.assertEqual(config.log_level, "DEBUG")
+        self.assertEqual(config.app_name, "my-chat-bot")
 
     def test_missing_required_env_raises(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -102,6 +103,38 @@ class ConfigTests(unittest.TestCase):
 
         self.assertEqual(config.telegram_bot_token, "")
         self.assertEqual(config.openai_api_key, "openai-key")
+
+    def test_openrouter_aliases_are_supported(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env_path = Path(temp_dir) / ".env"
+            env_path.write_text(
+                "\n".join(
+                    [
+                        "TELEGRAM_BOT_TOKEN=tg-token",
+                        "OPENROUTER_API_KEY=openrouter-key",
+                        "OPENROUTER_MODEL=openai/gpt-4o-mini",
+                        "APP_DOMAIN=thefem.ru",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            config = AppConfig.from_env_file(
+                env_path=str(env_path),
+                context_size=6,
+                summary_count=4,
+                memory_budget=500,
+                session_timeout_seconds=3600,
+                memory_db_path="data/test.sqlite3",
+                poll_timeout=25,
+                log_level="debug",
+            )
+
+        self.assertEqual(config.openai_api_key, "openrouter-key")
+        self.assertEqual(config.openai_model, "openai/gpt-4o-mini")
+        self.assertEqual(config.openai_api_url, "https://openrouter.ai/api/v1/responses")
+        self.assertEqual(config.app_url, "https://thefem.ru")
+        self.assertEqual(config.app_name, "thefem.ru")
 
     def test_invalid_context_size_raises(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

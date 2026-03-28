@@ -31,9 +31,9 @@ uv sync
 2. Скопируйте `.env.example` в `.env`.
 3. Заполните:
    - `TELEGRAM_BOT_TOKEN`
-   - `OPENAI_API_KEY`
-   - `OPENAI_MODEL`  
-     Для работы с фото и PDF лучше использовать multimodal-модель, например `gpt-4o-mini`.
+   - либо `OPENAI_API_KEY` + `OPENAI_MODEL`
+   - либо `OPENROUTER_API_KEY` + `OPENROUTER_MODEL`
+     Для работы с фото и PDF лучше использовать multimodal-модель, например `gpt-4o-mini` или совместимую модель в OpenRouter.
 4. Запустите бота:
 
 ```bash

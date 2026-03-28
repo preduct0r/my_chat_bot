@@ -55,6 +55,8 @@ class OpenAIResponsesClient:
         model: str,
         api_url: str,
         system_prompt: str,
+        app_url: str = "",
+        app_name: str = "",
         timeout: float = 30.0,
         transport: Optional[Transport] = None,
         logger: Optional[logging.Logger] = None,
@@ -63,6 +65,8 @@ class OpenAIResponsesClient:
         self.model = model
         self.api_url = api_url
         self.system_prompt = system_prompt
+        self.app_url = app_url
+        self.app_name = app_name
         self.timeout = timeout
         self.transport = transport or post_json
         self.logger = logger or logging.getLogger(__name__)
@@ -89,10 +93,7 @@ class OpenAIResponsesClient:
         response = self.transport(
             self.api_url,
             payload,
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "X-Client-Request-Id": correlation_id,
-            },
+            headers=self._build_headers(correlation_id),
             timeout=self.timeout,
         )
         self.logger.debug(
@@ -155,10 +156,7 @@ class OpenAIResponsesClient:
         response = self.transport(
             self.api_url,
             payload,
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "X-Client-Request-Id": correlation_id,
-            },
+            headers=self._build_headers(correlation_id),
             timeout=self.timeout,
         )
         text = extract_output_text(response.body)
@@ -169,6 +167,18 @@ class OpenAIResponsesClient:
         if not isinstance(parsed, dict):
             raise ExternalServiceError("Structured summary must be a JSON object")
         return parsed
+
+    def _build_headers(self, correlation_id: str) -> Dict[str, str]:
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "X-Client-Request-Id": correlation_id,
+        }
+        if "openrouter.ai" in self.api_url:
+            if self.app_url:
+                headers["HTTP-Referer"] = self.app_url
+            if self.app_name:
+                headers["X-OpenRouter-Title"] = self.app_name
+        return headers
 
 
 def extract_output_text(payload: object) -> str:

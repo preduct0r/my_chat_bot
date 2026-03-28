@@ -8,6 +8,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
+from .config import (
+    resolve_app_name,
+    resolve_app_url,
+    resolve_llm_api_key,
+    resolve_llm_api_url,
+    resolve_llm_model,
+)
 from .memory import MemoryService
 from .openai_client import OpenAIResponsesClient
 from .web_server import WebChatApp, WebServerConfig
@@ -23,6 +30,8 @@ class YandexFunctionConfig:
     openai_model: str
     openai_api_url: str
     openai_system_prompt: str
+    app_url: str
+    app_name: str
     context_size: int
     summary_count: int
     memory_budget: int
@@ -34,25 +43,34 @@ class YandexFunctionConfig:
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> "YandexFunctionConfig":
+        env_dict = {str(key): str(value) for key, value in env.items()}
         return cls(
-            openai_api_key=_required(env, "OPENAI_API_KEY"),
-            openai_model=_required(env, "OPENAI_MODEL"),
-            openai_api_url=env.get("OPENAI_API_URL", "https://api.openai.com/v1/responses"),
-            openai_system_prompt=env.get(
+            openai_api_key=_required_alias(
+                resolve_llm_api_key(env_dict),
+                "OPENAI_API_KEY or OPENROUTER_API_KEY",
+            ),
+            openai_model=_required_alias(
+                resolve_llm_model(env_dict),
+                "OPENAI_MODEL or OPENROUTER_MODEL",
+            ),
+            openai_api_url=resolve_llm_api_url(env_dict),
+            openai_system_prompt=env_dict.get(
                 "OPENAI_SYSTEM_PROMPT",
                 "Ты полезный web-ассистент. Отвечай кратко, по делу и на языке пользователя.",
             ),
-            context_size=_positive_int(env.get("CONTEXT_SIZE", "20"), "CONTEXT_SIZE"),
-            summary_count=_non_negative_int(env.get("SUMMARY_COUNT", "10"), "SUMMARY_COUNT"),
-            memory_budget=_positive_int(env.get("MEMORY_BUDGET", "2000"), "MEMORY_BUDGET"),
+            app_url=resolve_app_url(env_dict),
+            app_name=resolve_app_name(env_dict),
+            context_size=_positive_int(env_dict.get("CONTEXT_SIZE", "20"), "CONTEXT_SIZE"),
+            summary_count=_non_negative_int(env_dict.get("SUMMARY_COUNT", "10"), "SUMMARY_COUNT"),
+            memory_budget=_positive_int(env_dict.get("MEMORY_BUDGET", "2000"), "MEMORY_BUDGET"),
             session_timeout_seconds=_positive_int(
-                env.get("SESSION_TIMEOUT_SECONDS", "3600"),
+                env_dict.get("SESSION_TIMEOUT_SECONDS", "3600"),
                 "SESSION_TIMEOUT_SECONDS",
             ),
-            log_level=env.get("LOG_LEVEL", "INFO").upper(),
-            ydb_endpoint=_required(env, "YDB_ENDPOINT"),
-            ydb_database=_required(env, "YDB_DATABASE"),
-            static_dir=env.get(
+            log_level=env_dict.get("LOG_LEVEL", "INFO").upper(),
+            ydb_endpoint=_required(env_dict, "YDB_ENDPOINT"),
+            ydb_database=_required(env_dict, "YDB_DATABASE"),
+            static_dir=env_dict.get(
                 "STATIC_DIR",
                 str(Path(__file__).resolve().parent.parent / "web"),
             ),
@@ -102,6 +120,8 @@ def _get_app() -> WebChatApp:
         model=config.openai_model,
         api_url=config.openai_api_url,
         system_prompt=config.openai_system_prompt,
+        app_url=config.app_url,
+        app_name=config.app_name,
     )
     memory_service = MemoryService(
         repository=YDBMemoryRepository(
@@ -169,6 +189,12 @@ def _required(env: Mapping[str, str], key: str) -> str:
     value = env.get(key, "").strip()
     if not value:
         raise ValueError(f"Missing required environment variable: {key}")
+    return value
+
+
+def _required_alias(value: str, label: str) -> str:
+    if not value.strip():
+        raise ValueError(f"Missing required environment variable: {label}")
     return value
 
 

@@ -93,6 +93,8 @@ def main() -> None:
         model=config.openai_model,
         api_url=config.openai_api_url,
         system_prompt=config.openai_system_prompt,
+        app_url=config.app_url,
+        app_name=config.app_name,
     )
     memory_repository = SQLiteMemoryRepository(db_path=config.memory_db_path)
     memory_service = MemoryService(

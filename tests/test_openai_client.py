@@ -73,6 +73,7 @@ class OpenAIResponsesClientTests(unittest.TestCase):
         )
         self.assertEqual(captured["headers"]["Authorization"], "Bearer secret")
         self.assertEqual(captured["headers"]["X-Client-Request-Id"], "tg-10")
+        self.assertNotIn("HTTP-Referer", captured["headers"])
 
     def test_extract_output_text_raises_on_missing_text(self) -> None:
         with self.assertRaises(ExternalServiceError):
@@ -122,6 +123,45 @@ class OpenAIResponsesClientTests(unittest.TestCase):
         self.assertEqual(payload["personal"][0]["fact"], "Предпочитает русский")
         self.assertEqual(captured["payload"]["text"]["format"]["type"], "json_schema")
         self.assertEqual(captured["payload"]["text"]["format"]["name"], "dialogue_memory_summary")
+
+    def test_openrouter_request_adds_attribution_headers(self) -> None:
+        captured = {}
+
+        def fake_transport(url, payload, headers, timeout):
+            captured["url"] = url
+            captured["headers"] = headers
+            return HttpResponse(
+                status_code=200,
+                body={
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [{"type": "output_text", "text": "Привет!"}],
+                        }
+                    ]
+                },
+                headers={},
+            )
+
+        client = OpenAIResponsesClient(
+            api_key="secret",
+            model="openai/gpt-4o-mini",
+            api_url="https://openrouter.ai/api/v1/responses",
+            system_prompt="system prompt",
+            app_url="https://thefem.ru",
+            app_name="thefem.ru",
+            transport=fake_transport,
+        )
+
+        client.generate_reply(
+            messages=[ChatMessage.from_text(role="user", text="Привет")],
+            correlation_id="or-1",
+            user_reference="42",
+        )
+
+        self.assertEqual(captured["url"], "https://openrouter.ai/api/v1/responses")
+        self.assertEqual(captured["headers"]["HTTP-Referer"], "https://thefem.ru")
+        self.assertEqual(captured["headers"]["X-OpenRouter-Title"], "thefem.ru")
 
 
 if __name__ == "__main__":
