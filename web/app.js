@@ -1,10 +1,33 @@
 import React, { useEffect, useState } from "https://esm.sh/react@18";
 import { createRoot } from "https://esm.sh/react-dom@18/client";
 
+const SESSION_STORAGE_KEY = "my_chat_bot_web_session_token";
+
+function getSessionToken() {
+  return window.localStorage.getItem(SESSION_STORAGE_KEY) || "";
+}
+
+function storeSessionToken(payload) {
+  if (payload && typeof payload.sessionToken === "string" && payload.sessionToken) {
+    window.localStorage.setItem(SESSION_STORAGE_KEY, payload.sessionToken);
+  }
+}
+
+function buildHeaders(extraHeaders = {}) {
+  const headers = { ...extraHeaders };
+  const sessionToken = getSessionToken();
+  if (sessionToken) {
+    headers["X-Session-Token"] = sessionToken;
+  }
+  return headers;
+}
+
 function App() {
   const [state, setState] = useState({ linkedTelegramUserId: null, memoryUserId: null, messages: [] });
   const [message, setMessage] = useState("");
   const [linkCode, setLinkCode] = useState("");
+  const [files, setFiles] = useState([]);
+  const [fileInputKey, setFileInputKey] = useState(0);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
 
@@ -13,8 +36,9 @@ function App() {
   }, []);
 
   async function refreshState() {
-    const response = await fetch("/api/state", { credentials: "include" });
+    const response = await fetch("/api/state", { headers: buildHeaders() });
     const payload = await response.json();
+    storeSessionToken(payload);
     setState(payload);
   }
 
@@ -25,11 +49,11 @@ function App() {
     try {
       const response = await fetch("/api/link", {
         method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
+        headers: buildHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ code: linkCode }),
       });
       const payload = await response.json();
+      storeSessionToken(payload);
       if (!response.ok) {
         throw new Error(payload.error || "Не удалось привязать Telegram.");
       }
@@ -44,32 +68,27 @@ function App() {
 
   async function submitMessage(event) {
     event.preventDefault();
-    if (!message.trim()) {
+    if (!message.trim() && files.length === 0) {
       return;
     }
     setError("");
     setPending(true);
     try {
+      const attachments = await Promise.all(files.map((file) => toAttachmentPayload(file)));
       const response = await fetch("/api/chat", {
         method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message }),
+        headers: buildHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ message, attachments }),
       });
       const payload = await response.json();
+      storeSessionToken(payload);
       if (!response.ok) {
         throw new Error(payload.error || "Не удалось отправить сообщение.");
       }
-      setState((prev) => ({
-        linkedTelegramUserId: payload.linkedTelegramUserId,
-        memoryUserId: payload.memoryUserId,
-        messages: [
-          ...prev.messages,
-          { role: "user", text: message },
-          { role: "assistant", text: payload.reply },
-        ],
-      }));
       setMessage("");
+      setFiles([]);
+      setFileInputKey((value) => value + 1);
+      await refreshState();
     } catch (err) {
       setError(err.message || String(err));
     } finally {
@@ -152,10 +171,33 @@ function App() {
             onChange: (event) => setMessage(event.target.value),
             placeholder: "Введите сообщение...",
           }),
+          React.createElement("label", { className: "label", style: { marginTop: "14px" } }, "Вложения"),
+          React.createElement("input", {
+            key: fileInputKey,
+            type: "file",
+            multiple: true,
+            onChange: (event) => setFiles(Array.from(event.target.files || [])),
+          }),
+          files.length > 0
+            ? React.createElement(
+                "p",
+                { className: "muted", style: { marginTop: "10px", fontSize: "0.95rem" } },
+                files.map((file) => file.name).join(", ")
+              )
+            : null,
+          React.createElement(
+            "p",
+            { className: "muted", style: { marginTop: "10px", fontSize: "0.95rem" } },
+            "Поддерживаются изображения, PDF, DOC, DOCX, XLSX и текстовые файлы."
+          ),
           React.createElement(
             "div",
             { className: "actions" },
-            React.createElement("button", { type: "submit", disabled: pending || !message.trim() }, pending ? "Отправка..." : "Отправить"),
+            React.createElement(
+              "button",
+              { type: "submit", disabled: pending || (!message.trim() && files.length === 0) },
+              pending ? "Отправка..." : "Отправить"
+            ),
             React.createElement(
               "button",
               {
@@ -175,3 +217,22 @@ function App() {
 }
 
 createRoot(document.getElementById("root")).render(React.createElement(App));
+
+async function toAttachmentPayload(file) {
+  const dataUrl = await readFileAsDataUrl(file);
+  const commaIndex = dataUrl.indexOf(",");
+  return {
+    filename: file.name,
+    mimeType: file.type || "application/octet-stream",
+    dataBase64: commaIndex >= 0 ? dataUrl.slice(commaIndex + 1) : dataUrl,
+  };
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error(`Не удалось прочитать файл ${file.name}.`));
+    reader.readAsDataURL(file);
+  });
+}

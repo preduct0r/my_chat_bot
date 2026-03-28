@@ -10,13 +10,14 @@ from time import time
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from .context_store import ChatMessage
+from .memory_repository import MemoryRepository, SessionId
 from .openai_client import OpenAIResponsesClient
 from .prompt_builder import build_prompt_preview, build_reply_instructions, select_memory_with_budget
 
 
 @dataclass(frozen=True)
 class PreparedConversation:
-    session_id: int
+    session_id: SessionId
     instructions: str
     input_messages: List[ChatMessage]
     prompt_preview: str
@@ -133,7 +134,7 @@ class SQLiteMemoryRepository:
             )
             return cursor.fetchone()
 
-    def create_session(self, telegram_user_id: int, now_ts: int) -> int:
+    def create_session(self, telegram_user_id: int, now_ts: int) -> SessionId:
         with self._connect() as connection:
             cursor = connection.execute(
                 """
@@ -144,14 +145,14 @@ class SQLiteMemoryRepository:
             )
             return int(cursor.lastrowid)
 
-    def update_session_activity(self, session_id: int, now_ts: int) -> None:
+    def update_session_activity(self, session_id: SessionId, now_ts: int) -> None:
         with self._connect() as connection:
             connection.execute(
                 "UPDATE sessions SET last_activity_at = ? WHERE id = ?",
                 (now_ts, session_id),
             )
 
-    def close_session(self, session_id: int, now_ts: int) -> None:
+    def close_session(self, session_id: SessionId, now_ts: int) -> None:
         with self._connect() as connection:
             connection.execute(
                 """
@@ -162,7 +163,7 @@ class SQLiteMemoryRepository:
                 (now_ts, now_ts, session_id),
             )
 
-    def mark_session_summarized(self, session_id: int, now_ts: int) -> None:
+    def mark_session_summarized(self, session_id: SessionId, now_ts: int) -> None:
         with self._connect() as connection:
             connection.execute(
                 """
@@ -185,7 +186,7 @@ class SQLiteMemoryRepository:
             connection.executemany("DELETE FROM messages WHERE session_id = ?", ((session_id,) for session_id in session_ids))
             connection.executemany("DELETE FROM sessions WHERE id = ?", ((session_id,) for session_id in session_ids))
 
-    def add_message(self, session_id: int, message: ChatMessage, summary_text: str, now_ts: int) -> None:
+    def add_message(self, session_id: SessionId, message: ChatMessage, summary_text: str, now_ts: int) -> None:
         with self._connect() as connection:
             connection.execute(
                 """
@@ -201,7 +202,7 @@ class SQLiteMemoryRepository:
                 ),
             )
 
-    def get_recent_messages(self, session_id: int, limit: int) -> List[ChatMessage]:
+    def get_recent_messages(self, session_id: SessionId, limit: int) -> List[ChatMessage]:
         if limit <= 0:
             return []
         with self._connect() as connection:
@@ -218,7 +219,7 @@ class SQLiteMemoryRepository:
             rows = list(reversed(cursor.fetchall()))
         return [ChatMessage.from_storage_dict(json.loads(row["content_json"])) for row in rows]
 
-    def get_session_summary_transcript(self, session_id: int) -> str:
+    def get_session_summary_transcript(self, session_id: SessionId) -> str:
         with self._connect() as connection:
             cursor = connection.execute(
                 """
@@ -299,7 +300,7 @@ class SQLiteMemoryRepository:
 
     def save_session_summary(
         self,
-        session_id: int,
+        session_id: SessionId,
         telegram_user_id: int,
         summary_payload: Dict[str, Any],
         now_ts: int,
@@ -404,7 +405,7 @@ class SQLiteMemoryRepository:
 class MemoryService:
     def __init__(
         self,
-        repository: SQLiteMemoryRepository,
+        repository: MemoryRepository,
         openai_client: OpenAIResponsesClient,
         context_size: int,
         summary_count: int,
@@ -566,35 +567,10 @@ class MemoryService:
 
     def get_active_dialogue_messages(self, memory_user_id: int) -> List[ChatMessage]:
         return self.repository.get_active_session_messages_for_user(memory_user_id, self.context_size)
-        instructions = build_reply_instructions(
-            self.base_system_prompt,
-            selected_personal,
-            selected_summaries,
-        )
-        prompt_preview = build_prompt_preview(
-            self.base_system_prompt,
-            selected_personal,
-            selected_summaries,
-            recent_messages,
-        )
-        self.logger.debug(
-            "Prepared prompt correlation_id=%s telegram_user_id=%s session_id=%s summaries_included=%s memory_tokens=%s",
-            correlation_id,
-            telegram_user_id,
-            session_id,
-            len(selected_summaries),
-            budget_info["total_tokens"],
-        )
-        return PreparedConversation(
-            session_id=session_id,
-            instructions=instructions,
-            input_messages=recent_messages,
-            prompt_preview=prompt_preview,
-        )
 
     def store_assistant_reply(
         self,
-        session_id: int,
+        session_id: SessionId,
         reply_text: str,
         now_ts: Optional[int] = None,
     ) -> None:
@@ -658,7 +634,7 @@ class MemoryService:
 
     def _summarize_session(
         self,
-        session_id: int,
+        session_id: SessionId,
         telegram_user_id: int,
         correlation_id: str,
         now_ts: int,

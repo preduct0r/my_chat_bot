@@ -4,17 +4,18 @@ import logging
 import time
 from typing import Any, Dict, List, Optional
 
-from .attachments import IncomingAttachment, classify_attachment
-from .context_store import ChatMessage
+from .attachments import (
+    DEFAULT_ATTACHMENT_PROMPT,
+    SUPPORTED_ATTACHMENT_MESSAGE,
+    IncomingAttachment,
+    build_user_message,
+    build_user_summary_text,
+    classify_attachment,
+)
 from .http_utils import ExternalServiceError
 from .memory import MemoryService
 from .openai_client import OpenAIResponsesClient
 from .telegram_client import TelegramClient
-
-DEFAULT_ATTACHMENT_PROMPT = "Опиши вложение и ответь по нему."
-SUPPORTED_ATTACHMENT_MESSAGE = (
-    "Поддерживаются текстовые сообщения, изображения, PDF, DOC, DOCX, XLSX и текстовые файлы."
-)
 
 
 class TelegramBotApp:
@@ -165,8 +166,8 @@ class TelegramBotApp:
             return
 
         prompt_text = clean_text or DEFAULT_ATTACHMENT_PROMPT
-        user_message = self._build_user_message(prompt_text, attachments)
-        user_summary_text = self._build_user_summary_text(prompt_text, attachments)
+        user_message = build_user_message(prompt_text, attachments)
+        user_summary_text = build_user_summary_text(prompt_text, attachments)
         try:
             prepared = self.memory_service.prepare_conversation(
                 telegram_user_id=user_id,
@@ -213,22 +214,6 @@ class TelegramBotApp:
             chat_id,
             prepared.session_id,
         )
-
-    def _build_user_message(
-        self,
-        prompt_text: str,
-        attachments: List[IncomingAttachment],
-    ) -> ChatMessage:
-        content_parts: List[Dict[str, str]] = [{"type": "input_text", "text": prompt_text}]
-        for attachment in attachments:
-            content_parts.extend(attachment.to_content_parts())
-        return ChatMessage(role="user", content=tuple(content_parts))
-
-    def _build_user_summary_text(self, prompt_text: str, attachments: List[IncomingAttachment]) -> str:
-        attachment_descriptions = [attachment.summary_description() for attachment in attachments]
-        lines = [f"Пользователь: {prompt_text}"]
-        lines.extend(attachment_descriptions)
-        return "\n".join(lines)
 
     def _extract_attachments(
         self,

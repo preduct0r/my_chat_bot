@@ -5,18 +5,25 @@ import logging
 import time
 from dataclasses import dataclass
 from http import HTTPStatus
-from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, Optional
 from urllib.parse import urlparse
 
-from .context_store import ChatMessage
+from .attachments import (
+    DEFAULT_ATTACHMENT_PROMPT,
+    SUPPORTED_ATTACHMENT_MESSAGE,
+    IncomingAttachment,
+    build_user_message,
+    build_user_summary_text,
+    incoming_attachment_from_web_payload,
+)
 from .http_utils import ExternalServiceError
 from .memory import MemoryService, WebIdentity
 from .openai_client import OpenAIResponsesClient
+from .web_transport import WebRequest, WebResponse
 
-SESSION_COOKIE_NAME = "my_chat_bot_web_session"
+SESSION_TOKEN_HEADER = "X-Session-Token"
 
 
 @dataclass(frozen=True)
@@ -86,15 +93,24 @@ class WebChatApp:
         return self.memory_service.link_web_identity(identity.session_token, code.strip().upper())
 
     def handle_chat(self, identity: WebIdentity, text: str) -> Dict[str, Any]:
+        return self.handle_chat_with_attachments(identity=identity, text=text, attachments=[])
+
+    def handle_chat_with_attachments(
+        self,
+        identity: WebIdentity,
+        text: str,
+        attachments: list[IncomingAttachment],
+    ) -> Dict[str, Any]:
         clean_text = text.strip()
-        if not clean_text:
+        if not clean_text and not attachments:
             raise ValueError("message must not be empty")
 
+        prompt_text = clean_text or DEFAULT_ATTACHMENT_PROMPT
         correlation_id = f"web-{int(time.time() * 1000)}"
         prepared = self.memory_service.prepare_conversation(
             telegram_user_id=identity.memory_user_id,
-            message=ChatMessage.from_text(role="user", text=clean_text),
-            summary_text=f"Пользователь: {clean_text}",
+            message=build_user_message(prompt_text, attachments),
+            summary_text=build_user_summary_text(prompt_text, attachments),
             correlation_id=correlation_id,
         )
         reply = self.openai_client.generate_reply(
@@ -111,185 +127,202 @@ class WebChatApp:
             "promptPreview": prepared.prompt_preview,
         }
 
+    def handle_request(self, request: WebRequest) -> WebResponse:
+        self.maybe_run_maintenance()
+
+        if request.method == "GET" and request.path == "/api/state":
+            identity = self._resolve_identity(request)
+            return self._json_response(HTTPStatus.OK, self._with_session_token(self.get_state(identity), identity))
+
+        if request.method == "POST" and request.path == "/api/link":
+            return self._handle_link_request(request)
+
+        if request.method == "POST" and request.path == "/api/chat":
+            return self._handle_chat_request(request)
+
+        if request.method == "GET" and request.path == "/":
+            return self._static_response("index.html", "text/html; charset=utf-8")
+
+        if request.method == "GET" and request.path == "/app.js":
+            return self._static_response("app.js", "application/javascript; charset=utf-8")
+
+        return self._json_response(HTTPStatus.NOT_FOUND, {"error": "not found"})
+
+    def _handle_link_request(self, request: WebRequest) -> WebResponse:
+        identity = self._resolve_identity(request)
+        try:
+            payload = _read_json_body(request.body)
+        except ValueError as exc:
+            return self._json_response(HTTPStatus.BAD_REQUEST, self._with_session_token({"error": str(exc)}, identity))
+
+        code = str(payload.get("code", "")).strip()
+        if not code:
+            return self._json_response(
+                HTTPStatus.BAD_REQUEST,
+                self._with_session_token({"error": "code is required"}, identity),
+            )
+
+        linked = self.link_identity(identity, code)
+        if linked is None:
+            return self._json_response(
+                HTTPStatus.BAD_REQUEST,
+                self._with_session_token({"error": "invalid or expired code"}, identity),
+            )
+
+        return self._json_response(
+            HTTPStatus.OK,
+            self._with_session_token(
+                {
+                    "ok": True,
+                    "linkedTelegramUserId": linked.linked_telegram_user_id,
+                    "memoryUserId": linked.memory_user_id,
+                },
+                linked,
+            ),
+        )
+
+    def _handle_chat_request(self, request: WebRequest) -> WebResponse:
+        identity = self._resolve_identity(request)
+        try:
+            payload = _read_json_body(request.body)
+        except ValueError as exc:
+            return self._json_response(HTTPStatus.BAD_REQUEST, self._with_session_token({"error": str(exc)}, identity))
+
+        code = str(payload.get("code", "")).strip()
+        if code:
+            linked = self.link_identity(identity, code)
+            if linked is None:
+                return self._json_response(
+                    HTTPStatus.BAD_REQUEST,
+                    self._with_session_token({"error": "invalid or expired code"}, identity),
+                )
+            identity = linked
+
+        try:
+            attachments = _read_attachments_from_payload(payload)
+            response_payload = self.handle_chat_with_attachments(
+                identity,
+                str(payload.get("message", "")),
+                attachments,
+            )
+        except UnsupportedAttachmentError:
+            return self._json_response(
+                HTTPStatus.BAD_REQUEST,
+                self._with_session_token({"error": SUPPORTED_ATTACHMENT_MESSAGE}, identity),
+            )
+        except ValueError as exc:
+            return self._json_response(HTTPStatus.BAD_REQUEST, self._with_session_token({"error": str(exc)}, identity))
+        except ExternalServiceError as exc:
+            self.logger.exception("Web OpenAI request failed")
+            return self._json_response(HTTPStatus.BAD_GATEWAY, self._with_session_token({"error": str(exc)}, identity))
+
+        return self._json_response(HTTPStatus.OK, self._with_session_token(response_payload, identity))
+
+    def _resolve_identity(self, request: WebRequest) -> WebIdentity:
+        return self.get_or_create_identity(request.header(SESSION_TOKEN_HEADER))
+
+    def _with_session_token(self, payload: Dict[str, Any], identity: WebIdentity) -> Dict[str, Any]:
+        response_payload = dict(payload)
+        response_payload["sessionToken"] = identity.session_token
+        return response_payload
+
+    def _static_response(self, filename: str, content_type: str) -> WebResponse:
+        path = self.static_dir / filename
+        if not path.exists():
+            return self._json_response(HTTPStatus.NOT_FOUND, {"error": "not found"})
+        return WebResponse(
+            status_code=int(HTTPStatus.OK),
+            headers={
+                "Content-Type": content_type,
+                "Cache-Control": "no-store",
+            },
+            body=path.read_bytes(),
+        )
+
+    def _json_response(self, status: HTTPStatus, payload: Dict[str, Any]) -> WebResponse:
+        raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        return WebResponse(
+            status_code=int(status),
+            headers={
+                "Content-Type": "application/json; charset=utf-8",
+                "Cache-Control": "no-store",
+            },
+            body=raw,
+        )
+
+
+def _read_json_body(body: bytes) -> Dict[str, Any]:
+    raw = body or b"{}"
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError("invalid JSON body") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("JSON body must be an object")
+    return payload
+
+
+class UnsupportedAttachmentError(ValueError):
+    pass
+
+
+def _read_attachments_from_payload(payload: Dict[str, Any]) -> list[IncomingAttachment]:
+    raw_attachments = payload.get("attachments", [])
+    if raw_attachments in (None, ""):
+        return []
+    if not isinstance(raw_attachments, list):
+        raise ValueError("attachments must be an array")
+
+    attachments: list[IncomingAttachment] = []
+    for raw_attachment in raw_attachments:
+        if not isinstance(raw_attachment, dict):
+            raise ValueError("each attachment must be an object")
+        try:
+            attachments.append(incoming_attachment_from_web_payload(raw_attachment))
+        except ValueError as exc:
+            if "Unsupported attachment type" in str(exc):
+                raise UnsupportedAttachmentError(str(exc)) from exc
+            raise
+    return attachments
+
 
 def _build_handler():
     class Handler(BaseHTTPRequestHandler):
         server: WebChatHTTPServer
 
         def do_GET(self) -> None:
-            self.server.app.maybe_run_maintenance()
-            parsed = urlparse(self.path)
-            if parsed.path == "/api/state":
-                self._handle_state()
-                return
-            if parsed.path == "/":
-                self._serve_static("index.html", content_type="text/html; charset=utf-8")
-                return
-            if parsed.path == "/app.js":
-                self._serve_static("app.js", content_type="application/javascript; charset=utf-8")
-                return
-            self.send_error(HTTPStatus.NOT_FOUND)
+            self._dispatch_request()
 
         def do_POST(self) -> None:
-            self.server.app.maybe_run_maintenance()
-            parsed = urlparse(self.path)
-            if parsed.path == "/api/link":
-                self._handle_link()
-                return
-            if parsed.path == "/api/chat":
-                self._handle_chat()
-                return
-            self.send_error(HTTPStatus.NOT_FOUND)
+            self._dispatch_request()
 
         def log_message(self, format: str, *args: Any) -> None:
             self.server.app.logger.info("web %s - %s", self.address_string(), format % args)
 
-        def _handle_state(self) -> None:
-            identity, is_new = self._resolve_identity()
-            self._write_json(HTTPStatus.OK, self.server.app.get_state(identity), session_token=identity.session_token if is_new else None)
-
-        def _handle_link(self) -> None:
-            identity, is_new = self._resolve_identity()
-            try:
-                payload = self._read_json_body()
-            except ValueError as exc:
-                self._write_json(
-                    HTTPStatus.BAD_REQUEST,
-                    {"error": str(exc)},
-                    session_token=identity.session_token if is_new else None,
-                )
-                return
-            code = str(payload.get("code", "")).strip()
-            if not code:
-                self._write_json(
-                    HTTPStatus.BAD_REQUEST,
-                    {"error": "code is required"},
-                    session_token=identity.session_token if is_new else None,
-                )
-                return
-            linked = self.server.app.link_identity(identity, code)
-            if linked is None:
-                self._write_json(
-                    HTTPStatus.BAD_REQUEST,
-                    {"error": "invalid or expired code"},
-                    session_token=identity.session_token if is_new else None,
-                )
-                return
-            self._write_json(
-                HTTPStatus.OK,
-                {
-                    "ok": True,
-                    "linkedTelegramUserId": linked.linked_telegram_user_id,
-                    "memoryUserId": linked.memory_user_id,
-                },
-                session_token=linked.session_token if is_new else None,
-            )
-
-        def _handle_chat(self) -> None:
-            identity, is_new = self._resolve_identity()
-            try:
-                payload = self._read_json_body()
-            except ValueError as exc:
-                self._write_json(
-                    HTTPStatus.BAD_REQUEST,
-                    {"error": str(exc)},
-                    session_token=identity.session_token if is_new else None,
-                )
-                return
-            code = str(payload.get("code", "")).strip()
-            if code:
-                linked = self.server.app.link_identity(identity, code)
-                if linked is None:
-                    self._write_json(
-                        HTTPStatus.BAD_REQUEST,
-                        {"error": "invalid or expired code"},
-                        session_token=identity.session_token if is_new else None,
-                    )
-                    return
-                identity = linked
-
-            try:
-                response_payload = self.server.app.handle_chat(identity, str(payload.get("message", "")))
-            except ValueError as exc:
-                self._write_json(
-                    HTTPStatus.BAD_REQUEST,
-                    {"error": str(exc)},
-                    session_token=identity.session_token if is_new else None,
-                )
-                return
-            except ExternalServiceError as exc:
-                self.server.app.logger.exception("Web OpenAI request failed")
-                self._write_json(
-                    HTTPStatus.BAD_GATEWAY,
-                    {"error": str(exc)},
-                    session_token=identity.session_token if is_new else None,
-                )
-                return
-
-            self._write_json(
-                HTTPStatus.OK,
-                response_payload,
-                session_token=identity.session_token if is_new else None,
-            )
-
-        def _resolve_identity(self) -> tuple[WebIdentity, bool]:
-            session_token = self._read_session_cookie()
-            identity = self.server.app.get_or_create_identity(session_token)
-            return identity, session_token != identity.session_token
-
-        def _read_session_cookie(self) -> Optional[str]:
-            raw_cookie = self.headers.get("Cookie")
-            if not raw_cookie:
-                return None
-            cookie = SimpleCookie()
-            cookie.load(raw_cookie)
-            morsel = cookie.get(SESSION_COOKIE_NAME)
-            if morsel is None:
-                return None
-            return morsel.value
-
-        def _read_json_body(self) -> Dict[str, Any]:
+        def _dispatch_request(self) -> None:
+            parsed = urlparse(self.path)
             content_length = int(self.headers.get("Content-Length", "0"))
-            raw = self.rfile.read(content_length) if content_length > 0 else b"{}"
-            try:
-                payload = json.loads(raw.decode("utf-8"))
-            except json.JSONDecodeError:
-                raise ValueError("invalid JSON body")
-            if not isinstance(payload, dict):
-                raise ValueError("JSON body must be an object")
-            return payload
+            body = self.rfile.read(content_length) if content_length > 0 else b""
+            request = WebRequest(
+                method=self.command,
+                path=parsed.path,
+                headers={key: value for key, value in self.headers.items()},
+                body=body,
+            )
+            response = self.server.app.handle_request(request)
+            self._write_response(response)
 
-        def _serve_static(self, filename: str, content_type: str) -> None:
-            path = self.server.app.static_dir / filename
-            if not path.exists():
-                self.send_error(HTTPStatus.NOT_FOUND)
-                return
-            contents = path.read_bytes()
-            self.send_response(HTTPStatus.OK)
-            self.send_header("Content-Type", content_type)
-            self.send_header("Content-Length", str(len(contents)))
+        def _write_response(self, response: WebResponse) -> None:
+            self.send_response(response.status_code)
+            has_content_length = False
+            for key, value in response.headers.items():
+                if key.lower() == "content-length":
+                    has_content_length = True
+                self.send_header(key, value)
+            if not has_content_length:
+                self.send_header("Content-Length", str(len(response.body)))
             self.end_headers()
-            self.wfile.write(contents)
-
-        def _write_json(
-            self,
-            status: HTTPStatus,
-            payload: Dict[str, Any],
-            session_token: Optional[str] = None,
-        ) -> None:
-            raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-            self.send_response(status)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Content-Length", str(len(raw)))
-            self.send_header("Cache-Control", "no-store")
-            if session_token:
-                cookie = SimpleCookie()
-                cookie[SESSION_COOKIE_NAME] = session_token
-                cookie[SESSION_COOKIE_NAME]["path"] = "/"
-                cookie[SESSION_COOKIE_NAME]["httponly"] = True
-                cookie[SESSION_COOKIE_NAME]["samesite"] = "Lax"
-                self.send_header("Set-Cookie", cookie.output(header="").strip())
-            self.end_headers()
-            self.wfile.write(raw)
+            if response.body:
+                self.wfile.write(response.body)
 
     return Handler
