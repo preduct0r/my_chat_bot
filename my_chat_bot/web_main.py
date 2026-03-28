@@ -45,6 +45,7 @@ def main() -> None:
             memory_db_path=args.memory_db_path,
             poll_timeout=30,
             log_level=args.log_level,
+            require_telegram_bot_token=False,
         )
     except ConfigError as exc:
         parser.error(str(exc))

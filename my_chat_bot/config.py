@@ -35,6 +35,7 @@ class AppConfig:
         memory_db_path: str,
         poll_timeout: int,
         log_level: str,
+        require_telegram_bot_token: bool = True,
     ) -> "AppConfig":
         if context_size <= 0:
             raise ConfigError("context_size must be a positive integer")
@@ -49,10 +50,11 @@ class AppConfig:
 
         env = load_dotenv_file(env_path)
         required_keys = [
-            "TELEGRAM_BOT_TOKEN",
             "OPENAI_API_KEY",
             "OPENAI_MODEL",
         ]
+        if require_telegram_bot_token:
+            required_keys.insert(0, "TELEGRAM_BOT_TOKEN")
         missing_keys = [key for key in required_keys if not env.get(key)]
         if missing_keys:
             raise ConfigError(
@@ -60,7 +62,7 @@ class AppConfig:
             )
 
         return cls(
-            telegram_bot_token=env["TELEGRAM_BOT_TOKEN"],
+            telegram_bot_token=env.get("TELEGRAM_BOT_TOKEN", ""),
             openai_api_key=env["OPENAI_API_KEY"],
             openai_model=env["OPENAI_MODEL"],
             openai_api_url=env.get("OPENAI_API_URL", "https://api.openai.com/v1/responses"),

@@ -75,6 +75,34 @@ class ConfigTests(unittest.TestCase):
                     log_level="INFO",
                 )
 
+    def test_web_only_config_does_not_require_telegram_token(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env_path = Path(temp_dir) / ".env"
+            env_path.write_text(
+                "\n".join(
+                    [
+                        "OPENAI_API_KEY=openai-key",
+                        "OPENAI_MODEL=gpt-4.1-mini",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            config = AppConfig.from_env_file(
+                env_path=str(env_path),
+                context_size=5,
+                summary_count=4,
+                memory_budget=500,
+                session_timeout_seconds=3600,
+                memory_db_path="data/test.sqlite3",
+                poll_timeout=30,
+                log_level="INFO",
+                require_telegram_bot_token=False,
+            )
+
+        self.assertEqual(config.telegram_bot_token, "")
+        self.assertEqual(config.openai_api_key, "openai-key")
+
     def test_invalid_context_size_raises(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             env_path = Path(temp_dir) / ".env"
