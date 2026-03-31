@@ -1,6 +1,11 @@
 import unittest
 
-from my_chat_bot.attachments import IncomingAttachment, classify_attachment, decode_text_attachment
+from my_chat_bot.attachments import (
+    IncomingAttachment,
+    classify_attachment,
+    create_attachment,
+    decode_text_attachment,
+)
 
 
 class AttachmentTests(unittest.TestCase):
@@ -88,6 +93,12 @@ class AttachmentTests(unittest.TestCase):
             attachment.summary_description(),
             'Пользователь прикрепил PDF "spec.pdf".',
         )
+
+    def test_create_attachment_infers_mime_type_when_missing(self) -> None:
+        attachment = create_attachment("photo.jpg", "", b"\xff\xd8\xff")
+
+        self.assertEqual(attachment.kind, "image")
+        self.assertEqual(attachment.mime_type, "image/jpeg")
 
 
 if __name__ == "__main__":

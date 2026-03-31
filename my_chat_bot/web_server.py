@@ -4,14 +4,22 @@ import json
 import logging
 import time
 from dataclasses import dataclass
+from email.parser import BytesParser
+from email.policy import default as default_email_policy
 from http import HTTPStatus
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
-from .context_store import ChatMessage
+from .attachments import IncomingAttachment, create_attachment
+from .chat_inputs import (
+    DEFAULT_ATTACHMENT_PROMPT,
+    SUPPORTED_ATTACHMENT_MESSAGE,
+    build_user_message,
+    build_user_summary_text,
+)
 from .http_utils import ExternalServiceError
 from .memory import MemoryService, WebIdentity
 from .openai_client import OpenAIResponsesClient
@@ -24,6 +32,20 @@ class WebServerConfig:
     host: str
     port: int
     static_dir: str
+
+
+@dataclass(frozen=True)
+class MultipartFile:
+    field_name: str
+    filename: str
+    content_type: str
+    data: bytes
+
+
+@dataclass(frozen=True)
+class MultipartFormData:
+    fields: Dict[str, str]
+    files: List[MultipartFile]
 
 
 class WebChatHTTPServer(ThreadingHTTPServer):
@@ -85,16 +107,31 @@ class WebChatApp:
     def link_identity(self, identity: WebIdentity, code: str) -> Optional[WebIdentity]:
         return self.memory_service.link_web_identity(identity.session_token, code.strip().upper())
 
-    def handle_chat(self, identity: WebIdentity, text: str) -> Dict[str, Any]:
+    def handle_chat(
+        self,
+        identity: WebIdentity,
+        text: str,
+        attachments: Optional[List[IncomingAttachment]] = None,
+    ) -> Dict[str, Any]:
+        incoming_attachments = list(attachments or ())
         clean_text = text.strip()
-        if not clean_text:
+        if not clean_text and not incoming_attachments:
             raise ValueError("message must not be empty")
 
         correlation_id = f"web-{int(time.time() * 1000)}"
+        prompt_text = clean_text or DEFAULT_ATTACHMENT_PROMPT
+        user_message = build_user_message(prompt_text, incoming_attachments)
+        user_summary_text = build_user_summary_text(prompt_text, incoming_attachments)
+        self.logger.info(
+            "Received web chat correlation_id=%s memory_user_id=%s attachments=%s",
+            correlation_id,
+            identity.memory_user_id,
+            len(incoming_attachments),
+        )
         prepared = self.memory_service.prepare_conversation(
             telegram_user_id=identity.memory_user_id,
-            message=ChatMessage.from_text(role="user", text=clean_text),
-            summary_text=f"Пользователь: {clean_text}",
+            message=user_message,
+            summary_text=user_summary_text,
             correlation_id=correlation_id,
         )
         reply = self.openai_client.generate_reply(
@@ -188,7 +225,15 @@ def _build_handler():
         def _handle_chat(self) -> None:
             identity, is_new = self._resolve_identity()
             try:
-                payload = self._read_json_body()
+                payload, attachments = self._read_chat_payload()
+            except UnsupportedAttachmentError as exc:
+                self.server.app.logger.warning("Web upload rejected error=%s", exc)
+                self._write_json(
+                    HTTPStatus.BAD_REQUEST,
+                    {"error": SUPPORTED_ATTACHMENT_MESSAGE},
+                    session_token=identity.session_token if is_new else None,
+                )
+                return
             except ValueError as exc:
                 self._write_json(
                     HTTPStatus.BAD_REQUEST,
@@ -209,7 +254,11 @@ def _build_handler():
                 identity = linked
 
             try:
-                response_payload = self.server.app.handle_chat(identity, str(payload.get("message", "")))
+                response_payload = self.server.app.handle_chat(
+                    identity,
+                    str(payload.get("message", "")),
+                    attachments=attachments,
+                )
             except ValueError as exc:
                 self._write_json(
                     HTTPStatus.BAD_REQUEST,
@@ -248,9 +297,21 @@ def _build_handler():
                 return None
             return morsel.value
 
+        def _read_chat_payload(self) -> tuple[Dict[str, Any], List[IncomingAttachment]]:
+            content_type = self.headers.get("Content-Type", "")
+            if content_type.lower().startswith("multipart/form-data"):
+                form_data = self._read_multipart_form_data()
+                return (
+                    {
+                        "message": form_data.fields.get("message", ""),
+                        "code": form_data.fields.get("code", ""),
+                    },
+                    _attachments_from_multipart_files(form_data.files),
+                )
+            return self._read_json_body(), []
+
         def _read_json_body(self) -> Dict[str, Any]:
-            content_length = int(self.headers.get("Content-Length", "0"))
-            raw = self.rfile.read(content_length) if content_length > 0 else b"{}"
+            raw = self._read_body_bytes(default=b"{}")
             try:
                 payload = json.loads(raw.decode("utf-8"))
             except json.JSONDecodeError:
@@ -258,6 +319,17 @@ def _build_handler():
             if not isinstance(payload, dict):
                 raise ValueError("JSON body must be an object")
             return payload
+
+        def _read_multipart_form_data(self) -> MultipartFormData:
+            content_type = self.headers.get("Content-Type", "")
+            raw = self._read_body_bytes(default=b"")
+            return parse_multipart_form_data(content_type, raw)
+
+        def _read_body_bytes(self, default: bytes) -> bytes:
+            content_length = int(self.headers.get("Content-Length", "0"))
+            if content_length <= 0:
+                return default
+            return self.rfile.read(content_length)
 
         def _serve_static(self, filename: str, content_type: str) -> None:
             path = self.server.app.static_dir / filename
@@ -293,3 +365,59 @@ def _build_handler():
             self.wfile.write(raw)
 
     return Handler
+
+
+class UnsupportedAttachmentError(Exception):
+    """Raised when an uploaded file type is not supported."""
+
+
+def parse_multipart_form_data(content_type: str, raw_body: bytes) -> MultipartFormData:
+    if not content_type.lower().startswith("multipart/form-data"):
+        raise ValueError("expected multipart/form-data request")
+
+    message = BytesParser(policy=default_email_policy).parsebytes(
+        f"Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n".encode("utf-8") + raw_body
+    )
+    if not message.is_multipart():
+        raise ValueError("invalid multipart/form-data body")
+
+    fields: Dict[str, str] = {}
+    files: List[MultipartFile] = []
+    for part in message.iter_parts():
+        if part.get_content_disposition() != "form-data":
+            continue
+        field_name = part.get_param("name", header="content-disposition")
+        if not isinstance(field_name, str) or not field_name:
+            continue
+        filename = part.get_filename()
+        if isinstance(filename, str) and filename:
+            files.append(
+                MultipartFile(
+                    field_name=field_name,
+                    filename=filename,
+                    content_type=part.get_content_type(),
+                    data=part.get_payload(decode=True) or b"",
+                )
+            )
+            continue
+        charset = part.get_content_charset() or "utf-8"
+        fields[field_name] = (part.get_payload(decode=True) or b"").decode(charset, errors="replace")
+    return MultipartFormData(fields=fields, files=files)
+
+
+def _attachments_from_multipart_files(files: List[MultipartFile]) -> List[IncomingAttachment]:
+    attachments: List[IncomingAttachment] = []
+    for file_item in files:
+        if not file_item.filename:
+            continue
+        try:
+            attachments.append(
+                create_attachment(
+                    filename=file_item.filename,
+                    mime_type=file_item.content_type,
+                    data=file_item.data,
+                )
+            )
+        except ValueError as exc:
+            raise UnsupportedAttachmentError(str(exc)) from exc
+    return attachments

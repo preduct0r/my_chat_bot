@@ -93,6 +93,16 @@ class IncomingAttachment:
         raise ValueError(f"Unsupported attachment kind: {self.kind}")
 
 
+def create_attachment(filename: str, mime_type: str, data: bytes) -> IncomingAttachment:
+    kind = classify_attachment(filename=filename, mime_type=mime_type)
+    return IncomingAttachment(
+        kind=kind,
+        filename=filename,
+        mime_type=mime_type or infer_mime_type_from_kind(kind),
+        data=data,
+    )
+
+
 def classify_attachment(filename: str, mime_type: str) -> str:
     normalized_mime = (mime_type or "").lower()
     suffix = Path(filename).suffix.lower()
@@ -121,3 +131,15 @@ def decode_text_attachment(data: bytes) -> str:
         except UnicodeDecodeError:
             continue
     return data.decode("utf-8", errors="replace")
+
+
+def infer_mime_type_from_kind(kind: str) -> str:
+    if kind == "image":
+        return "image/jpeg"
+    if kind == "pdf":
+        return "application/pdf"
+    if kind == "rich_document":
+        return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    if kind == "spreadsheet":
+        return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    return "text/plain"

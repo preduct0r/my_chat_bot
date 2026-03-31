@@ -1,12 +1,14 @@
-import React, { useEffect, useState } from "https://esm.sh/react@18";
+import React, { useEffect, useRef, useState } from "https://esm.sh/react@18";
 import { createRoot } from "https://esm.sh/react-dom@18/client";
 
 function App() {
   const [state, setState] = useState({ linkedTelegramUserId: null, memoryUserId: null, messages: [] });
   const [message, setMessage] = useState("");
+  const [selectedFiles, setSelectedFiles] = useState([]);
   const [linkCode, setLinkCode] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
+  const fileInputRef = useRef(null);
 
   useEffect(() => {
     refreshState();
@@ -44,32 +46,32 @@ function App() {
 
   async function submitMessage(event) {
     event.preventDefault();
-    if (!message.trim()) {
+    if (!message.trim() && selectedFiles.length === 0) {
       return;
     }
     setError("");
     setPending(true);
     try {
+      const formData = new FormData();
+      formData.append("message", message);
+      for (const file of selectedFiles) {
+        formData.append("files", file);
+      }
       const response = await fetch("/api/chat", {
         method: "POST",
         credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message }),
+        body: formData,
       });
       const payload = await response.json();
       if (!response.ok) {
         throw new Error(payload.error || "Не удалось отправить сообщение.");
       }
-      setState((prev) => ({
-        linkedTelegramUserId: payload.linkedTelegramUserId,
-        memoryUserId: payload.memoryUserId,
-        messages: [
-          ...prev.messages,
-          { role: "user", text: message },
-          { role: "assistant", text: payload.reply },
-        ],
-      }));
       setMessage("");
+      setSelectedFiles([]);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+      await refreshState();
     } catch (err) {
       setError(err.message || String(err));
     } finally {
@@ -152,10 +154,29 @@ function App() {
             onChange: (event) => setMessage(event.target.value),
             placeholder: "Введите сообщение...",
           }),
+          React.createElement("label", { className: "label", style: { marginTop: "16px" } }, "Документы и файлы"),
+          React.createElement("input", {
+            ref: fileInputRef,
+            type: "file",
+            multiple: true,
+            onChange: (event) => setSelectedFiles(Array.from(event.target.files || [])),
+            accept: ".txt,.md,.json,.csv,.py,.js,.ts,.html,.css,.xml,.yaml,.yml,.pdf,.doc,.docx,.xls,.xlsx,image/*",
+          }),
+          React.createElement(
+            "p",
+            { className: "muted", style: { marginTop: "10px", fontSize: "0.95rem" } },
+            selectedFiles.length > 0
+              ? `Выбрано файлов: ${selectedFiles.map((file) => file.name).join(", ")}`
+              : "Можно отправлять изображения, PDF, DOC, DOCX, XLSX и текстовые файлы."
+          ),
           React.createElement(
             "div",
             { className: "actions" },
-            React.createElement("button", { type: "submit", disabled: pending || !message.trim() }, pending ? "Отправка..." : "Отправить"),
+            React.createElement(
+              "button",
+              { type: "submit", disabled: pending || (!message.trim() && selectedFiles.length === 0) },
+              pending ? "Отправка..." : "Отправить"
+            ),
             React.createElement(
               "button",
               {
