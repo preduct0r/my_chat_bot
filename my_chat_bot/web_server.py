@@ -165,6 +165,9 @@ def _build_handler():
             if parsed.path == "/app.js":
                 self._serve_static("app.js", content_type="application/javascript; charset=utf-8")
                 return
+            if parsed.path == "/app_logic.js":
+                self._serve_static("app_logic.js", content_type="application/javascript; charset=utf-8")
+                return
             self.send_error(HTTPStatus.NOT_FOUND)
 
         def do_POST(self) -> None:

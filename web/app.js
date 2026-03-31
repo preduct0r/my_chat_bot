@@ -1,11 +1,11 @@
 import React, { useEffect, useRef, useState } from "https://esm.sh/react@18";
 import { createRoot } from "https://esm.sh/react-dom@18/client";
+import { shouldSubmitOnEnter } from "/app_logic.js";
 
 function App() {
-  const [state, setState] = useState({ linkedTelegramUserId: null, memoryUserId: null, messages: [] });
+  const [state, setState] = useState({ messages: [] });
   const [message, setMessage] = useState("");
   const [selectedFiles, setSelectedFiles] = useState([]);
-  const [linkCode, setLinkCode] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const fileInputRef = useRef(null);
@@ -18,30 +18,6 @@ function App() {
     const response = await fetch("/api/state", { credentials: "include" });
     const payload = await response.json();
     setState(payload);
-  }
-
-  async function submitLink(event) {
-    event.preventDefault();
-    setError("");
-    setPending(true);
-    try {
-      const response = await fetch("/api/link", {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code: linkCode }),
-      });
-      const payload = await response.json();
-      if (!response.ok) {
-        throw new Error(payload.error || "Не удалось привязать Telegram.");
-      }
-      setLinkCode("");
-      await refreshState();
-    } catch (err) {
-      setError(err.message || String(err));
-    } finally {
-      setPending(false);
-    }
   }
 
   async function submitMessage(event) {
@@ -79,117 +55,96 @@ function App() {
     }
   }
 
+  function handleComposerKeyDown(event) {
+    if (
+      shouldSubmitOnEnter({
+        key: event.key,
+        shiftKey: event.shiftKey,
+        pending,
+        hasMessage: Boolean(message.trim()),
+        hasFiles: selectedFiles.length > 0,
+      })
+    ) {
+      event.preventDefault();
+      submitMessage(event);
+    }
+  }
+
   return React.createElement(
     "div",
     { className: "page" },
     React.createElement(
       "section",
       { className: "hero" },
-      React.createElement("h1", null, "thefem.ru"),
+      React.createElement("h1", null, "Виртуальный помощник"),
       React.createElement(
         "p",
         null,
-        "Web-вход в того же ассистента. Можно использовать отдельную web-память или привязать браузер к Telegram и разделять общую память."
+        "Бот принимает запросы на любые темы, может поддерживать диалог и выступать в роли специалиста практически в любой области. Он также умеет запоминать контекст ваших прошлых разговоров."
       )
     ),
     React.createElement(
-      "div",
-      { className: "grid" },
+      "main",
+      { className: "card" },
+      React.createElement("h2", null, "Чат"),
       React.createElement(
-        "aside",
-        { className: "card" },
-        React.createElement("h2", null, "Память"),
-        React.createElement(
-          "div",
-          { className: "status" },
-          state.linkedTelegramUserId
-            ? `Привязано к Telegram: ${state.linkedTelegramUserId}`
-            : "Отдельный web-пользователь"
-        ),
-        React.createElement("p", { className: "muted", style: { marginTop: "12px" } }, `memory_user_id: ${state.memoryUserId ?? "..."}`),
-        React.createElement(
-          "form",
-          { onSubmit: submitLink, style: { marginTop: "18px" } },
-          React.createElement("label", { className: "label" }, "Код из Telegram команды /link"),
-          React.createElement("input", {
-            value: linkCode,
-            onChange: (event) => setLinkCode(event.target.value.toUpperCase()),
-            placeholder: "ABCD-1234",
-          }),
-          React.createElement(
-            "div",
-            { className: "actions" },
-            React.createElement("button", { type: "submit", disabled: pending || !linkCode.trim() }, "Привязать")
-          )
-        ),
-        React.createElement(
-          "p",
-          { className: "muted", style: { marginTop: "18px", fontSize: "0.95rem" } },
-          "Если код не вводить, браузер будет работать как отдельный пользователь со своей памятью."
-        )
+        "div",
+        { className: "messages" },
+        state.messages.length === 0
+          ? React.createElement("p", { className: "muted" }, "История текущей активной web-сессии пока пуста.")
+          : state.messages.map((item, index) =>
+              React.createElement(
+                "div",
+                { key: `${item.role}-${index}`, className: `bubble ${item.role}` },
+                item.text
+              )
+            )
       ),
       React.createElement(
-        "main",
-        { className: "card" },
-        React.createElement("h2", null, "Чат"),
+        "form",
+        { onSubmit: submitMessage, style: { marginTop: "18px" } },
+        React.createElement("label", { className: "label" }, "Сообщение"),
+        React.createElement("textarea", {
+          value: message,
+          onChange: (event) => setMessage(event.target.value),
+          onKeyDown: handleComposerKeyDown,
+          placeholder: "Введите сообщение...",
+        }),
+        React.createElement("label", { className: "label", style: { marginTop: "16px" } }, "Документы и файлы"),
+        React.createElement("input", {
+          ref: fileInputRef,
+          type: "file",
+          multiple: true,
+          onChange: (event) => setSelectedFiles(Array.from(event.target.files || [])),
+          accept: ".txt,.md,.json,.csv,.py,.js,.ts,.html,.css,.xml,.yaml,.yml,.pdf,.doc,.docx,.xls,.xlsx,image/*",
+        }),
         React.createElement(
-          "div",
-          { className: "messages" },
-          state.messages.length === 0
-            ? React.createElement("p", { className: "muted" }, "История текущей активной web-сессии пока пуста.")
-            : state.messages.map((item, index) =>
-                React.createElement(
-                  "div",
-                  { key: `${item.role}-${index}`, className: `bubble ${item.role}` },
-                  item.text
-                )
-              )
+          "p",
+          { className: "muted", style: { marginTop: "10px", fontSize: "0.95rem" } },
+          selectedFiles.length > 0
+            ? `Выбрано файлов: ${selectedFiles.map((file) => file.name).join(", ")}`
+            : "Можно отправлять изображения, PDF, DOC, DOCX, XLSX и текстовые файлы."
         ),
         React.createElement(
-          "form",
-          { onSubmit: submitMessage, style: { marginTop: "18px" } },
-          React.createElement("label", { className: "label" }, "Сообщение"),
-          React.createElement("textarea", {
-            value: message,
-            onChange: (event) => setMessage(event.target.value),
-            placeholder: "Введите сообщение...",
-          }),
-          React.createElement("label", { className: "label", style: { marginTop: "16px" } }, "Документы и файлы"),
-          React.createElement("input", {
-            ref: fileInputRef,
-            type: "file",
-            multiple: true,
-            onChange: (event) => setSelectedFiles(Array.from(event.target.files || [])),
-            accept: ".txt,.md,.json,.csv,.py,.js,.ts,.html,.css,.xml,.yaml,.yml,.pdf,.doc,.docx,.xls,.xlsx,image/*",
-          }),
+          "div",
+          { className: "actions" },
           React.createElement(
-            "p",
-            { className: "muted", style: { marginTop: "10px", fontSize: "0.95rem" } },
-            selectedFiles.length > 0
-              ? `Выбрано файлов: ${selectedFiles.map((file) => file.name).join(", ")}`
-              : "Можно отправлять изображения, PDF, DOC, DOCX, XLSX и текстовые файлы."
+            "button",
+            { type: "submit", disabled: pending || (!message.trim() && selectedFiles.length === 0) },
+            pending ? "Отправка..." : "Отправить"
           ),
           React.createElement(
-            "div",
-            { className: "actions" },
-            React.createElement(
-              "button",
-              { type: "submit", disabled: pending || (!message.trim() && selectedFiles.length === 0) },
-              pending ? "Отправка..." : "Отправить"
-            ),
-            React.createElement(
-              "button",
-              {
-                type: "button",
-                className: "ghost",
-                onClick: refreshState,
-                disabled: pending,
-              },
-              "Обновить"
-            )
-          ),
-          error ? React.createElement("p", { className: "error" }, error) : null
-        )
+            "button",
+            {
+              type: "button",
+              className: "ghost",
+              onClick: refreshState,
+              disabled: pending,
+            },
+            "Обновить"
+          )
+        ),
+        error ? React.createElement("p", { className: "error" }, error) : null
       )
     )
   );
